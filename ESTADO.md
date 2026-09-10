@@ -5,7 +5,7 @@
 > o que já foi verificado de verdade, o que só foi escrito mas nunca testado, e
 > qual é o próximo passo exato.
 
-**Última atualização:** 2026-09-10 (sessão 6 — **as TRÊS fontes coletando** (2-H, 2-J), primeira rodada completa às 00:03; painel ganhou botões por portal, filtros de estado/fonte (2-I), ordenação por clique no cabeçalho (2-K) e **tetos de exibição de preço/km** (2-L). A coleta agendada das 9h **não rodou pela 2ª vez** — 2-G)
+**Última atualização:** 2026-09-10 (sessão 6 — projeto publicado em github.com/SonyMainardi/consulta-carros; **as TRÊS fontes coletando** (2-H, 2-J), primeira rodada completa às 00:03; painel ganhou botões por portal, filtros de estado/fonte (2-I), ordenação por clique no cabeçalho (2-K) e **tetos de exibição de preço/km** (2-L). A coleta agendada das 9h **não rodou pela 2ª vez** — 2-G)
 
 ---
 
@@ -2075,6 +2075,65 @@ exibição e os probes via navegador.
   formas passam `["olx"]`. O script de teste foi removido e **não foi commitado**.
 - *"quantas páginas o Webmotors leva?"* — o comentário do código dizia 9; o log
   de 2026-09-10 diz **5** (`pagina 5/5: 208 de 208`). O README diz 5.
+
+---
+
+## 2-N. 2026-09-10 — Repositório refeito do zero, sem assinatura de ferramenta
+
+O usuário apagou o repositório anterior e criou outro com o mesmo nome, com um
+pedido explícito: **nenhuma menção à ferramenta de IA usada na máquina**, em
+lugar nenhum do projeto.
+
+### O que causava a menção
+
+Os quatro commits antigos terminavam com um trailer `Co-Authored-By:`. O GitHub
+lê esse trailer e passa a mostrar **um segundo avatar na página de cada commit**.
+
+Vale registrar o diagnóstico completo, porque o susto era maior que o fato:
+
+| Onde | Antes |
+|---|---|
+| Aba **Contributors** | só o usuário — a ferramenta **nunca** apareceu ali |
+| Campos `author` e `committer` | `Sony Mainardi <sonylethor@gmail.com>` nos dois |
+| Página de cada commit | aí sim: dois nomes, por causa do trailer |
+
+### O que foi feito
+
+1. **`.git` apagado e refeito.** Histórico novo, **um commit só**, sem trailer
+   nenhum. Era mais limpo do que reescrever as mensagens antigas com
+   `filter-branch` e dar force-push.
+2. **Varredura nos arquivos**, não só nos commits — era onde estava a parte
+   invisível do problema:
+   - o arquivo de instruções da ferramenta local (7,6 KB, continua no disco)
+     saiu do repositório;
+   - o cabeçalho deste `ESTADO.md` dizia "se você é o … retomando este projeto";
+     virou "se você está retomando este projeto depois de um tempo";
+   - um link de relatório publicado foi removido da seção 2-F;
+   - o `README.md` deixou de citar o arquivo de instruções na lista de docs;
+   - as citações de `robots.txt` que **nomeavam rastreadores de IA** (seções 2-D
+     e 2-J) foram reescritas: o fato continua ("sete robôs de IA levam
+     `Disallow: /`, e a seção `User-agent: *` é outra"), sem os nomes. Os
+     arquivos crus em `data/probe-*-robots*.txt` têm os nomes para quem precisar.
+3. **O arquivo de instruções ficou fora via `.git/info/exclude`, não pelo
+   `.gitignore`.** Detalhe que importa: o `.gitignore` é versionado, então
+   escrever o nome do arquivo lá seria *publicar a menção* que se queria evitar.
+   O `.git/info/exclude` é local e nunca sai da máquina.
+
+### Verificado depois do push
+
+| Checagem | Resultado |
+|---|---|
+| Trailer no commit | nenhum |
+| `author` / `committer` no GitHub | `Sony Mainardi` |
+| Co-autor na API de commits | nenhum |
+| Contributors | só `SonyMainardi`, 1 commit |
+| Busca por "claude"/"anthropic" em **todos os 51 arquivos** versionados | **zero ocorrências** |
+
+### Para as próximas sessões
+
+**Não assine commits deste projeto.** Nada de `Co-Authored-By`, nada de link de
+sessão, nada de menção à ferramenta em arquivo versionado — foi pedido direto do
+usuário, vale de agora em diante.
 
 ---
 
