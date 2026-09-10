@@ -1,0 +1,25 @@
+# O que voce quer monitorar. Um bloco por busca.
+# Rode `npm run db:seed` depois de editar.
+#
+# A classificacao por faixa de km (ate 50 mil / 50-70 mil / 70-100 mil) NAO se
+# configura aqui: e calculada na leitura por kmBand() em src/core/normalize.js,
+# e aparece no painel como filtro (chips) e como coluna.
+
+watches:
+  - slug: mitsubishi-lancer
+    name: "Mitsubishi Lancer ate 100 mil km"
+    enabled: true
+    brand: Mitsubishi
+    model: Lancer
+    km_max: 100000
+    # Sem teto de preco nem recorte de ano/UF: o interesse e o carro em si, e o
+    # painel ja deixa ordenar por preco e por % da FIPE.
+    #
+    # O km_max acima NAO vira filtro na URL de nenhuma das fontes: os dois
+    # portais proibem esse tipo de parametro no robots.txt. A busca vem inteira
+    # e o corte de 100 mil km acontece no matchesWatch, depois da coleta.
+    #
+    # As TRES fontes no ar desde 2026-09-09, todas via navegador real. O
+    # Mercado Livre entrou pelo site publico (lista.mercadolivre.com.br), sem
+    # token e sem app cadastrado — ver ESTADO.md secao 2-J.
+    sources: [webmotors, olx, mercadolivre]

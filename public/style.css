@@ -1,0 +1,641 @@
+/* =============================================================================
+   Painel Consulta de Carros — folha unica, tema escuro, sem tema claro.
+
+   CONTRATO: o public/app.js injeta HTML e classes que ESTA folha precisa
+   conhecer. Nada aqui pode ser renomeado sem mexer no JS junto. Os nomes que
+   vem do JS estao marcados com [JS] no comentario da secao.
+
+   Principios do visual:
+   - bordas de 1px sao a cola da interface; o resto e plano (so o appbar tem
+     sombra);
+   - hover muda o FUNDO, status muda a BORDA;
+   - laranja e reservado a "precisa de uma pessoa" (CAPTCHA). Nao usar para
+     decorar.
+   ========================================================================== */
+
+:root {
+  /* superficies */
+  --bg:            #0e0e14;
+  --appbar:        #1a1a2e;
+  --card:          #16162a;
+  --card-hover:    #1a1a30;
+  --panel-head-bg: #14142a;
+  --table-head-bg: #191932;
+
+  /* bordas */
+  --border:        #2a2a3e;
+  --border-row:    #22223a;
+  --border-strong: #3949ab;
+
+  /* texto */
+  --text:          #e8e8f0;
+  --text-2:        #a0a0b8;
+  --text-3:        #8f8fa8;
+  --text-4:        #6e6e88;
+
+  /* indigo — cor de marca e de selecao */
+  --indigo:        #7986cb;
+  --indigo-2:      #9fa8da;
+  --indigo-3:      #c5cae9;
+  --indigo-4:      #3949ab;
+  --indigo-bg:     #1e1e3a;
+  --indigo-on:     #2b2b55;
+
+  /* semanticas */
+  --green:         #66bb6a;
+  --green-2:       #81c784;
+  --teal:          #80cbc4;
+  --orange:        #f57c00;   /* SO para atencao humana (CAPTCHA) */
+  --orange-2:      #ffb74d;
+  --red:           #ef5350;
+  --red-bg:        #2a1214;
+
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  --r-card: 8px;
+  --r-chip: 4px;
+
+  --t-bg: background-color .15s linear;
+  --t-bd: border-color .15s linear;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.5 var(--font);
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2 { margin: 0; }
+
+/* Todo numero que precisa alinhar usa monospace com tabular-nums. */
+.num, .meta, .value, .n, .src {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible { outline: 2px solid var(--indigo-2); outline-offset: 2px; }
+
+/* =============================================================================
+   APPBAR
+   ========================================================================== */
+
+.appbar {
+  position: relative;
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  padding: 14px 22px;
+  background: var(--appbar);
+  border-bottom: 1px solid var(--border);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, .6);
+}
+
+/* Faixa vermelha de 3px no topo — o unico acento fora do conteudo. */
+.appbar::before {
+  content: "";
+  position: absolute; inset: 0 0 auto 0; height: 3px;
+  background: var(--red);
+}
+
+.wordmark {
+  display: inline-flex; align-items: center;
+  font-size: 16px; line-height: 1;
+  text-transform: uppercase; letter-spacing: .14em;
+  white-space: nowrap;
+}
+.wordmark .wm-1 { font-weight: 700; color: #fff; }
+.wordmark .wm-2 { font-weight: 300; color: var(--indigo); }
+.wordmark .wm-slash {
+  width: 2px; height: 15px; margin: 0 11px;
+  background: var(--red);
+  transform: skewX(-18deg);
+}
+
+/* O recorte monitorado, separado do wordmark por uma borda. */
+/* =============================================================================
+   BOTOES DE COLETA  [JS: #collect-group, .collect, .collect.fonte, .bar,
+   .rotulo, .spin, e os estados .collecting .indeterminate .needs-human .done
+   .failed]
+
+   Um botao por portal desde 2026-09-09 (pedido do usuario: testar uma fonte
+   sem rodar as tres). Todo o estado visual — barra, listra, spinner, laranja
+   do CAPTCHA — vale para qualquer um deles, por isso as regras sao de CLASSE
+   e nao mais do id #collect.
+   ========================================================================== */
+
+.collect-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+.collect {
+  position: relative; overflow: hidden;
+  display: inline-flex; align-items: center; justify-content: center; gap: 9px;
+  min-width: 190px; padding: 9px 16px;
+  background: var(--indigo-bg);
+  color: var(--indigo-3);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-chip);
+  font: 600 13px/1 var(--font);
+  text-transform: uppercase; letter-spacing: .08em;
+  cursor: pointer;
+  transition: var(--t-bg), var(--t-bd);
+}
+.collect:hover:not(:disabled) { background: var(--indigo-on); }
+.collect:disabled { cursor: default; }
+.collect:disabled:not(.collecting) { color: var(--text-4); background: var(--card); }
+
+/* A barra e o preenchimento; a largura vem do JS. */
+.collect .bar {
+  position: absolute; inset: 0 auto 0 0; z-index: 1;
+  width: 0;
+  background: rgba(121, 134, 203, .30);
+  pointer-events: none;
+  transition: width .4s linear;
+}
+.collect .rotulo { position: relative; z-index: 2; }
+
+.collect.collecting { color: var(--indigo-3); border-color: var(--indigo); }
+
+/* Sem total de paginas conhecido (a 1a inclui abrir o navegador e um eventual
+   CAPTCHA): listra andando, em vez de inventar porcentagem. */
+.collect.indeterminate .bar {
+  width: 100%;
+  transition: none;
+  background: repeating-linear-gradient(
+    115deg,
+    rgba(121, 134, 203, .34) 0 12px,
+    rgba(121, 134, 203, .10) 12px 24px
+  );
+  background-size: 48px 100%;
+  animation: barStripes .9s linear infinite;
+}
+@keyframes barStripes { to { background-position: 48px 0; } }
+
+/* Spinner: so durante a coleta. */
+.collect .spin {
+  display: none; position: relative; z-index: 2;
+  width: 12px; height: 12px; border-radius: 50%;
+  border: 2px solid rgba(159, 168, 218, .30);
+  border-top-color: var(--indigo-2);
+  animation: spin .7s linear infinite;
+}
+.collect.collecting .spin { display: inline-block; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Atencao humana: o CAPTCHA expira em 5 min e leva a coleta junto. Tem
+   prioridade visual sobre a barra — por isso vem depois dela na folha. */
+.collect.needs-human {
+  border-color: var(--orange);
+  color: var(--orange-2);
+  animation: pulseDot 1.5s infinite;
+}
+.collect.needs-human > span { color: var(--orange-2); }
+.collect.needs-human .bar {
+  width: 100%;
+  background: rgba(245, 124, 0, .24);
+  animation: none;
+}
+/* Esperando uma pessoa, ou ja terminou: girar ali seria mentira. */
+.collect.needs-human .spin,
+.collect.done .spin,
+.collect.failed .spin { display: none; }
+
+@keyframes pulseDot { 0%, 100% { opacity: 1; } 50% { opacity: .55; } }
+
+.collect.done   { border-color: var(--green); color: var(--green-2); }
+.collect.done .bar   { width: 100%; background: rgba(102, 187, 106, .26); animation: none; }
+.collect.failed { border-color: var(--red); color: var(--red); }
+.collect.failed .bar { width: 100%; background: rgba(239, 83, 80, .24); animation: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .collect .bar { transition: none; }
+  .collect.indeterminate .bar { animation: none; }
+  .collect.needs-human { animation: none; }
+  .collect .spin { animation-duration: 2.4s; }
+}
+
+/* Os botoes por fonte sao secundarios: o "Coletar tudo" continua sendo a
+   acao principal, e quatro botoes com o mesmo peso viram uma parede azul.
+   Menores, sem caixa alta e com borda discreta — ate serem clicados, quando
+   herdam exatamente os mesmos estados de progresso do botao principal. */
+.collect.fonte {
+  min-width: 0; padding: 9px 13px;
+  background: var(--bg);
+  color: var(--text-2);
+  border-color: var(--border);
+  font: 500 12px/1 var(--font);
+  text-transform: none; letter-spacing: .02em;
+}
+.collect.fonte:hover:not(:disabled) { background: var(--card-hover); border-color: var(--indigo-4); color: var(--text); }
+.collect.fonte.collecting { color: var(--indigo-3); }
+
+/* =============================================================================
+   CONTEUDO
+   ========================================================================== */
+
+.wrap { max-width: 1400px; margin: 0 auto; padding: 20px 22px 44px; }
+
+/* ---- Cartoes [JS: #summary recebe .card .value .label, mais .v-neutro
+   .v-novo .v-baixa .v-saida] ---- */
+.cards {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 12px; margin-bottom: 20px;
+}
+#summary { min-height: 100px; }
+
+.card {
+  display: flex; flex-direction: column; justify-content: center; gap: 6px;
+  min-height: 100px; padding: 16px 18px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  transition: var(--t-bg);
+}
+.card:hover { background: var(--card-hover); }
+
+.card .value { font-size: 34px; font-weight: 700; line-height: 1; }
+.card .label {
+  color: var(--text-3); font-size: 11px; line-height: 1.35;
+  text-transform: uppercase; letter-spacing: .12em;
+}
+
+/* Cor do numero por posicao. As classes .v-* que o JS escreve apontam para as
+   MESMAS cores, entao os dois caminhos concordam. */
+.cards .card:nth-child(1) .value, .card .value.v-neutro { color: var(--indigo); }
+.cards .card:nth-child(2) .value, .card .value.v-novo   { color: #fff; }
+.cards .card:nth-child(3) .value, .card .value.v-baixa  { color: var(--green); }
+.cards .card:nth-child(4) .value, .card .value.v-saida  { color: var(--red); }
+
+/* ---- Paineis ----
+   Cabecalho e corpo sao um bloco so: o corpo nao repete a borda de cima e
+   herda os cantos de baixo. */
+.panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--r-card);
+  margin-bottom: 20px;
+  overflow: hidden;
+}
+.panel-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--panel-head-bg);
+  border-top: none;
+  border-bottom: 1px solid var(--border);
+}
+.panel-head h2 {
+  font-size: 13px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .12em;
+  color: var(--text);
+}
+.panel-head > div { display: flex; gap: 8px; flex-wrap: wrap; }
+
+/* Selects [JS le #event-filter, #source-filter e #sort]. */
+select,
+#event-filter, #source-filter, #sort {
+  background: var(--bg);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  padding: 6px 10px;
+  font: 12.5px var(--font);
+  cursor: pointer;
+  transition: var(--t-bd);
+}
+select:hover { border-color: var(--indigo-4); }
+
+/* =============================================================================
+   O QUE MUDOU  [JS: #events, .event, .event-body, .tag + variantes, .meta,
+   .empty]
+   ========================================================================== */
+
+#events, .events {
+  max-height: 440px; overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+#events::-webkit-scrollbar { width: 8px; }
+#events::-webkit-scrollbar-track { background: transparent; }
+#events::-webkit-scrollbar-thumb {
+  background: var(--border); border-radius: 999px;
+  border: 2px solid transparent; background-clip: padding-box;
+}
+#events::-webkit-scrollbar-thumb:hover { background: var(--border-strong); background-clip: padding-box; }
+
+/* Duas colunas: badge de largura fixa e conteudo. Titulo e metadados na mesma
+   coluna, entao comecam no mesmo x em todas as linhas. */
+.event {
+  display: grid; grid-template-columns: 104px 1fr; gap: 12px;
+  align-items: baseline;
+  padding: 11px 16px;
+  border-bottom: 1px solid var(--border-row);
+  transition: var(--t-bg);
+}
+.event:last-child { border-bottom: none; }
+.event:hover { background: var(--card-hover); }
+
+.event-body { min-width: 0; }
+.event a {
+  display: block;
+  color: var(--text); text-decoration: none; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.event a:hover { color: var(--indigo-2); text-decoration: underline; }
+
+.meta {
+  color: var(--text-3); font-size: 12px; margin-top: 3px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.meta strong { color: var(--text-2); font-weight: 700; }
+
+/* Cada tag e fundo tingido + borda 1px da propria cor. min-width igual mantem
+   a coluna reta. */
+.tag {
+  display: inline-block; min-width: 104px;
+  padding: 3px 8px; border-radius: var(--r-chip);
+  font-size: 11px; font-weight: 700; line-height: 1.5;
+  text-transform: uppercase; letter-spacing: .06em;
+  text-align: center; white-space: nowrap;
+  border: 1px solid transparent;
+}
+.tag.NEW         { color: var(--indigo-2); background: rgba(121, 134, 203, .14); border-color: rgba(121, 134, 203, .45); }
+.tag.PRICE_DROP  { color: var(--green-2);  background: rgba(102, 187, 106, .14); border-color: rgba(102, 187, 106, .45); }
+.tag.PRICE_UP    { color: var(--red);      background: var(--red-bg);            border-color: rgba(239, 83, 80, .45); }
+.tag.DISAPPEARED { color: var(--red);      background: var(--red-bg);            border-color: rgba(239, 83, 80, .45); }
+.tag.RELISTED    { color: var(--orange-2); background: rgba(245, 124, 0, .12);   border-color: rgba(245, 124, 0, .40); }
+.tag.KM_CHANGED  { color: var(--text-3);   background: rgba(143, 143, 168, .12); border-color: var(--border); }
+
+/* Lista vazia (aqui e na tabela). */
+.empty {
+  padding: 30px 16px; text-align: center;
+  color: var(--text-4); font-size: 13px;
+}
+
+/* =============================================================================
+   CHIPS DE FILTRO  [JS: #bands, #cambios, .band, .band.on, .n]
+   ========================================================================== */
+
+.bands {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-row);
+}
+.bands-label {
+  width: 56px; flex-shrink: 0;
+  color: var(--text-4); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .1em;
+}
+/* As duas linhas de chips. O id vem do HTML e a classe do mesmo elemento; a
+   regra usa os dois para o container nao depender de uma so amarra. */
+.chips, #bands, #cambios { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.band {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 5px 12px;
+  background: var(--bg);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  font: 12px var(--font);
+  cursor: pointer;
+  transition: var(--t-bg), var(--t-bd);
+}
+.band:hover { background: var(--card-hover); }
+.band.on {
+  background: var(--indigo-on);
+  border-color: var(--indigo);
+  color: #fff;
+}
+.band .n { font-size: 11.5px; opacity: .75; }
+
+/* =============================================================================
+   TABELA DE ANUNCIOS  [JS: #listings, .num, .badge, .src, .below, .above,
+   .kmband + .b1..b4, .gear + .g-*, .empty]
+   ========================================================================== */
+
+.table-wrap { overflow-x: auto; }
+
+#listings {
+  /* 1140 = a soma das colunas fixas (988) + um minimo decente para ANUNCIO.
+     Subiu de 1080 quando a coluna FONTE cresceu para caber o filtro. */
+  width: 100%; min-width: 1140px;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+/* Larguras por coluna: a grade nao se remonta quando um filtro troca o
+   conteudo. ANUNCIO fica com o que sobra. */
+#listings col.c-anuncio { width: auto; }
+#listings col.c-ano     { width: 78px; }
+#listings col.c-km      { width: 96px; }
+#listings col.c-faixa   { width: 108px; }
+#listings col.c-cambio  { width: 118px; }
+#listings col.c-preco   { width: 124px; }
+#listings col.c-fipe    { width: 100px; }
+#listings col.c-local   { width: 196px; }
+/* 96px antes de a coluna virar filtro. 168px cabe "Mercado Livre" — o nome mais
+   longo — sem reticencias. O truncamento acima e a garantia de que um nome
+   ainda maior no futuro corte o texto em vez de quebrar a tabela. */
+#listings col.c-fonte   { width: 168px; }
+
+#listings th {
+  height: 38px;
+  padding: 0 12px;
+  background: var(--table-head-bg);
+  color: var(--text-3);
+  font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .1em;
+  text-align: left; white-space: nowrap;
+  border-bottom: 1px solid var(--border);
+}
+
+#listings td {
+  height: 46px;
+  padding: 0 12px;
+  vertical-align: middle;
+  border-bottom: 1px solid var(--border-row);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+#listings tbody tr:last-child td { border-bottom: none; }
+#listings tbody tr { transition: var(--t-bg); }
+#listings tbody tr:hover { background: var(--card-hover); }
+
+#listings th:first-child, #listings td:first-child { padding-left: 18px; }
+#listings th:last-child,  #listings td:last-child  { padding-right: 18px; }
+
+#listings td a { color: var(--text); text-decoration: none; }
+#listings td a:hover { color: var(--indigo-2); text-decoration: underline; }
+
+/* Alinhamento: a MESMA classe no th e no td, senao o titulo fica de um lado e
+   o valor do outro.
+
+   As duas ultimas regras nao sao redundancia: o seletor `#listings th` acima
+   carrega especificidade de id (1,0,1) e venceria `.num` (0,1,0), jogando todo
+   cabecalho para a esquerda enquanto o valor fica a direita. Ja aconteceu. */
+.num   { text-align: right; white-space: nowrap; }
+.badge { text-align: center; }
+
+#listings th.num,   #listings td.num   { text-align: right; }
+#listings th.badge, #listings td.badge { text-align: center; }
+
+/* As colunas de badge levam padding menor que as outras (6px em vez de 12px).
+   E aritmetica, nao capricho: faixa tem 108px e o badge pede 88px de
+   min-width; com 12px de cada lado sobravam 84px e o badge era cortado com
+   reticencias. 108-12=96 e 118-12=106 acomodam os 88 e os 96 com folga. */
+#listings th.badge, #listings td.badge { padding-left: 6px; padding-right: 6px; }
+
+/* Preco: a coluna que se le primeiro. */
+#listings tbody td:nth-child(6) { font-size: 14px; font-weight: 700; color: var(--text); }
+
+/* % da FIPE: abaixo da tabela e o achado; acima e o alerta. */
+.below { color: var(--green); font-weight: 700; }
+.above { color: var(--red);   font-weight: 700; }
+
+.src {
+  color: var(--text-4); font-size: 11px;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+
+/* Badges da tabela: min-width igual em toda a coluna, senao a linha danca. */
+.kmband, .gear {
+  display: inline-block;
+  padding: 3px 8px; border-radius: var(--r-chip);
+  font-size: 11px; line-height: 1.5; white-space: nowrap; text-align: center;
+  background: var(--bg);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+}
+.kmband { min-width: 88px; }
+.gear   { min-width: 96px; }
+
+.kmband.b1 { color: var(--green);    border-color: rgba(102, 187, 106, .45); }
+.kmband.b2 { color: var(--teal);     border-color: rgba(128, 203, 196, .45); }
+.kmband.b3 { color: var(--indigo-2); border-color: rgba(121, 134, 203, .45); }
+.kmband.b4 { color: var(--red);      border-color: rgba(239, 83, 80, .45); }
+
+/* 'outro' = rotulo que nenhum grupo de cambio reconheceu. Vermelho de
+   proposito: e sinal de contrato novo na fonte, nao so mais uma categoria. */
+.gear.g-outro { color: var(--red); border-color: rgba(239, 83, 80, .45); background: var(--red-bg); }
+
+/* A linha de "nada encontrado" nao segue a grade. */
+#listings td.empty { height: auto; white-space: normal; }
+
+/* =============================================================================
+   FILTRO DE ESTADO NO CABECALHO  [JS: #uf-toggle, #uf-label, #uf-menu,
+   .th-btn, .th-btn.on, .caret, .menu, .menu-item, .mi-uf, .mi-nome, .n]
+
+   O cabecalho LOCAL e um botao que ocupa a celula inteira, entao a area de
+   clique e o cabecalho todo — e nao so as cinco letras da palavra.
+   ========================================================================== */
+
+/* Celula cujo conteudo inteiro e um botao: o padding vai para o botao, para a
+   area de clique cobrir o cabecalho todo. */
+#listings th.th-filtro, #listings th.th-ordena { padding: 0; }
+
+.th-btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  /* min-width:0 + o truncamento do rotulo abaixo sao o que IMPEDE o cabecalho
+     de empurrar a tabela. Sem isso, "Fonte: Mercado Livre" ficava mais largo
+     que a coluna, o cabecalho saia mais largo que o corpo e a tabela inteira
+     ganhava rolagem horizontal e desalinhamento (visto pelo usuario em
+     2026-09-09). Largura de coluna e do <col>; o texto que se ajuste. */
+  min-width: 0; max-width: 100%;
+  width: 100%; height: 38px;
+  padding: 0 12px;
+  background: none; border: none;
+  /* O <th> nao herda para dentro do <button>: os estilos de cabecalho
+     (11px, 700, caixa alta) precisam ser repetidos aqui. */
+  color: var(--text-3);
+  font: 700 11px/1 var(--font);
+  text-transform: uppercase; letter-spacing: .1em;
+  text-align: left; white-space: nowrap;
+  cursor: pointer;
+  transition: color .15s linear;
+}
+#listings th.th-filtro:first-child .th-btn { padding-left: 18px; }
+.th-btn:hover { color: var(--indigo-2); }
+.th-btn.on    { color: var(--indigo-2); }
+
+/* Cabecalho numerico: o conteudo encosta a direita, como os valores da coluna.
+   Sem isto o "Preco" ficaria a esquerda e os numeros a direita. */
+.th-btn--num { justify-content: flex-end; }
+
+/* A seta da ordenacao. Apagada enquanto a coluna nao e a ordem ativa — o
+   suficiente para dizer "da para clicar" sem competir com o dado. */
+.th-btn--num .caret { opacity: .25; transition: opacity .15s linear, transform .15s linear; }
+.th-btn--num.asc .caret,
+.th-btn--num.desc .caret { opacity: 1; }
+/* O triangulo base aponta para baixo (decrescente); crescente e ele virado. */
+.th-btn--num.asc .caret { transform: rotate(180deg); }
+
+/* O rotulo encolhe e corta; a seta nunca. */
+.th-btn > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.th-btn .caret { flex-shrink: 0; }
+
+/* Triangulo em CSS puro: nao vale carregar um SVG para 5px de seta. */
+.caret {
+  width: 0; height: 0; flex-shrink: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 5px solid currentColor;
+  opacity: .7;
+}
+.th-btn[aria-expanded="true"] .caret { transform: rotate(180deg); }
+
+/* position: fixed porque o menu esta no <body> e a coordenada vem do JS —
+   dentro do .table-wrap (overflow-x: auto) ele seria recortado. */
+.menu {
+  position: fixed; z-index: 50;
+  min-width: 232px; max-height: 320px; overflow-y: auto;
+  padding: 5px;
+  background: var(--card);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-card);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .55);
+  scrollbar-width: thin;
+  scrollbar-color: var(--border) transparent;
+}
+
+/* Tres colunas: sigla (largura fixa, para os nomes comecarem no mesmo x),
+   nome por extenso e contagem encostada a direita. */
+.menu-item {
+  display: grid; grid-template-columns: 34px 1fr auto; gap: 10px;
+  align-items: center;
+  width: 100%;
+  padding: 7px 9px;
+  background: none;
+  border: none; border-radius: var(--r-chip);
+  color: var(--text-2);
+  font: 12.5px var(--font);
+  text-align: left;
+  cursor: pointer;
+  transition: var(--t-bg);
+}
+.menu-item:hover { background: var(--card-hover); color: var(--text); }
+.menu-item.on {
+  background: var(--indigo-on);
+  color: #fff;
+}
+/* Menu sem sigla (o de fontes): duas colunas em vez de tres. */
+.menu.sem-sigla .menu-item { grid-template-columns: 1fr auto; }
+
+.mi-uf   { font-weight: 700; letter-spacing: .04em; }
+.mi-nome { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.menu-item .n { font-size: 11.5px; opacity: .75; }
+
+/* =============================================================================
+   RESPONSIVO
+   ========================================================================== */
+
+@media (max-width: 720px) {
+  .appbar { padding: 12px 14px; gap: 12px; }
+  .wrap { padding: 16px 14px 32px; }
+
+  .actions { margin-left: 0; width: 100%; }
+  .collect-group { width: 100%; }
+  /* So o principal estica: os de fonte ficam do tamanho do nome, senao cada
+     um vira uma faixa larga e o cabecalho ocupa meia tela no celular. */
+  .collect[data-source=""] { flex: 1; }
+}

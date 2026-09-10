@@ -1,0 +1,41 @@
+# ---------- Dependencias ----------
+node_modules/
+
+# ---------- Segredos ----------
+# O .env tem a senha do MySQL e as credenciais do app do Mercado Livre.
+# O .env.example continua versionado: e o modelo que a pessoa copia.
+.env
+.env.*
+!.env.example
+
+# ---------- Estado de execucao ----------
+# Nada aqui e codigo, e nada aqui deve ir para o repositorio:
+#   browser/            sessao do Chromium (~170 MB) — cookies de sessao reais
+#   cookies/            cookies do cliente HTTP
+#   ml-tokens.json      access + refresh token do Mercado Livre
+#   probe-*.html/.json  copias de paginas de terceiros (anuncios, fotos,
+#                       vendedores). Regeneraveis: `npm run probe:wm:browser`,
+#                       `probe:olx:browser`, `probe:ml:browser`
+#   fipe-cache.json     cache local da API da FIPE
+data/*
+!data/.gitkeep
+
+# ---------- Logs ----------
+logs/
+*.log
+
+# ---------- Qualquer arquivo marcado como local ----------
+*.local.*
+
+# ---------- Lixo de sistema e de editor ----------
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+*.swp
+*~
+
+# ---------- npm ----------
+npm-debug.log*
+.npm/

@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Consulta de Carros</title>
+  <!-- Icone da aba: carro + lupa. SVG porque a aba pede 16px e um bitmap
+       desse tamanho fica sujo; o PNG fica de reserva para navegador antigo
+       que ignora favicon em SVG. -->
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+  <link rel="alternate icon" type="image/png" sizes="32x32" href="/favicon.png" />
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <!-- ATENCAO: o app.js e o contrato desta pagina. Todos os ids e classes daqui
+       (e os que o JS injeta) tem regra no style.css. Renomear qualquer um
+       quebra o painel EM SILENCIO — nada falha, so para de aparecer. -->
+  <header class="appbar">
+    <h1 class="wordmark">
+      <span class="wm-1">Consulta</span><i class="wm-slash" aria-hidden="true"></i><span class="wm-2">Carros</span>
+    </h1>
+
+    <div class="actions">
+      <!-- Um botao por portal, para poder testar UMA fonte sem rodar as tres
+           (pedido do usuario em 2026-09-09). O primeiro roda todas; os outros
+           sao injetados pelo app.js a partir de /api/sources, porque a lista de
+           adapters e do servidor — nao vale duplicar aqui e sair de sincronia.
+
+           Em cada botao: <i class="bar"> e o preenchimento da barra e o texto
+           mora em <span class="rotulo">. O partesBotao() do app.js procura
+           essas duas classes. -->
+      <div id="collect-group" class="collect-group">
+        <button class="collect" data-source="" data-rotulo="Coletar tudo">
+          <i class="bar"></i><i class="spin" aria-hidden="true"></i><span class="rotulo">Coletar tudo</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section id="summary" class="cards"></section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>O que mudou</h2>
+        <select id="event-filter">
+          <option value="">todos os eventos</option>
+          <option value="NEW">novos</option>
+          <option value="PRICE_DROP">baixaram de preco</option>
+          <option value="DISAPPEARED">sairam do ar</option>
+          <option value="RELISTED">reanunciados</option>
+        </select>
+      </div>
+      <div id="events" class="events"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <h2>Anuncios ativos</h2>
+        <div>
+          <!-- Criterio de ordenacao. A DIRECAO nao esta aqui de proposito: ela
+               e do cabecalho da coluna (1 clique crescente, outro decrescente),
+               e o app.js mantem os dois em sincronia. Sem isso seriam 9
+               opcoes no select e dois controles capazes de discordar. -->
+          <select id="sort">
+            <option value="fipe">ordenar por % da FIPE</option>
+            <option value="preco">ordenar por preco</option>
+            <option value="km">ordenar por km</option>
+            <option value="ano">ordenar por ano</option>
+            <option value="novos">mais recentes</option>
+          </select>
+        </div>
+      </div>
+      <div class="bands"><span class="bands-label">km</span><div id="bands" class="chips"></div></div>
+      <div class="bands"><span class="bands-label">cambio</span><div id="cambios" class="chips"></div></div>
+      <div class="table-wrap">
+        <table id="listings">
+          <!-- Grade fixa: a largura e da COLUNA, nao do conteudo. Sem isso a
+               tabela se remontava a cada filtro (um Evolution de R$ 549.900
+               alargava a coluna de preco e empurrava todas as outras). ANUNCIO
+               fica com `auto` e absorve o espaco que sobra. -->
+          <colgroup>
+            <col class="c-anuncio" /><col class="c-ano" /><col class="c-km" />
+            <col class="c-faixa" /><col class="c-cambio" />
+            <col class="c-preco" /><col class="c-fipe" />
+            <col class="c-local" /><col class="c-fonte" />
+          </colgroup>
+          <thead>
+            <tr>
+              <!-- Cabecalho e celula usam a MESMA classe de alinhamento
+                   (`num` a direita, `badge` centralizado). Se so a celula levar,
+                   o titulo fica de um lado e o valor do outro. -->
+              <th>Anuncio</th>
+              <!-- ANO, KM, PRECO e FIPE ordenam: 1 clique crescente, outro
+                   inverte. `data-campo` e o que o app.js manda para a API. -->
+              <th class="num th-ordena">
+                <button type="button" class="th-btn th-btn--num ordena" data-campo="ano">
+                  <span>Ano</span><i class="caret" aria-hidden="true"></i>
+                </button>
+              </th>
+              <th class="num th-ordena">
+                <button type="button" class="th-btn th-btn--num ordena" data-campo="km">
+                  <span>KM</span><i class="caret" aria-hidden="true"></i>
+                </button>
+              </th>
+              <th class="badge">Faixa</th><th class="badge">Cambio</th>
+              <!-- PRECO ordena: 1 clique crescente, outro clique inverte.
+                   Mesma mecanica de celula-botao dos cabecalhos de filtro, mas
+                   alinhada a direita porque a coluna e numerica. -->
+              <th class="num th-ordena">
+                <button type="button" class="th-btn th-btn--num ordena" data-campo="preco">
+                  <span>Preco</span><i class="caret" aria-hidden="true"></i>
+                </button>
+              </th>
+              <th class="num th-ordena">
+                <button type="button" class="th-btn th-btn--num ordena" data-campo="fipe">
+                  <span>FIPE</span><i class="caret" aria-hidden="true"></i>
+                </button>
+              </th>
+              <!-- LOCAL abre o menu de estados (#uf-menu, la embaixo no body).
+                   O <th> perde o padding para o botao ocupar a celula inteira e
+                   a area de clique cobrir o cabecalho todo. -->
+              <th class="th-filtro">
+                <button id="uf-toggle" type="button" class="th-btn"
+                        aria-haspopup="listbox" aria-expanded="false"
+                        title="filtrar por estado">
+                  <span id="uf-label">Local</span><i class="caret" aria-hidden="true"></i>
+                </button>
+              </th>
+              <!-- FONTE abre o menu de portais (#fonte-menu, la embaixo). -->
+              <th class="th-filtro">
+                <button id="fonte-toggle" type="button" class="th-btn"
+                        aria-haspopup="listbox" aria-expanded="false"
+                        title="filtrar por portal">
+                  <span id="fonte-label">Fonte</span><i class="caret" aria-hidden="true"></i>
+                </button>
+              </th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+  </main>
+
+  <!-- Menu do filtro de estados. Fica no <body>, e nao dentro do <th>, porque
+       .table-wrap tem overflow-x:auto e recortaria o menu aberto. O JS o
+       posiciona (position: fixed) debaixo do cabecalho LOCAL. -->
+  <div id="uf-menu" class="menu" role="listbox" aria-label="Filtrar por estado" hidden></div>
+  <div id="fonte-menu" class="menu sem-sigla" role="listbox" aria-label="Filtrar por portal" hidden></div>
+
+  <script src="/app.js" type="module"></script>
+</body>
+</html>
