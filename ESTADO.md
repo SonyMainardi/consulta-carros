@@ -2127,7 +2127,12 @@ Vale registrar o diagnóstico completo, porque o susto era maior que o fato:
 | `author` / `committer` no GitHub | `Sony Mainardi` |
 | Co-autor na API de commits | nenhum |
 | Contributors | só `SonyMainardi`, 1 commit |
-| Busca por "claude"/"anthropic" em **todos os 51 arquivos** versionados | **zero ocorrências** |
+| Busca pelo nome da ferramenta (e da empresa) em **todos os 51 arquivos** versionados | **zero ocorrências** |
+
+**Pegadinha:** a primeira versão desta seção **reintroduziu a palavra** ao
+descrever a própria varredura (`Busca por "..." em 51 arquivos`). A checagem
+acusou, e a linha foi reescrita sem citar os termos. Vale para quem for
+documentar isso de novo: descrever a busca é fácil de esquecer.
 
 ### Para as próximas sessões
 
