@@ -1,3 +1,5 @@
+import { planilhaAnuncios } from './exportar.js';
+
 const $ = (sel) => document.querySelector(sel);
 const api = (path) => fetch(path).then((r) => r.json());
 
@@ -381,9 +383,21 @@ for (const b of document.querySelectorAll('.ordena')) {
   b.addEventListener('click', () => ordenarPor(b.dataset.campo));
 }
 
+// As linhas que estao NA TELA agora. A exportacao le daqui, e nao de uma nova
+// chamada a API: assim o arquivo e exatamente o que o usuario esta vendo —
+// mesmos filtros, mesma ordem, mesmo limite — e nunca uma versao que mudou
+// entre o olhar e o clique.
+let linhasVisiveis = [];
+
 async function loadListings() {
   const rows = await api(`/api/listings?${filtrosQS({ sort: ordemParaApi(), limit: '200' })}`);
   const tbody = $('#listings tbody');
+
+  linhasVisiveis = rows;
+  $('#export').disabled = !rows.length;
+  $('#export').title = rows.length
+    ? `exportar os ${rows.length} anúncios desta visualização (planilha do Excel, com links)`
+    : 'nada para exportar com esses filtros';
 
   if (!rows.length) {
     tbody.innerHTML = '<tr><td colspan="9" class="empty">Nenhum anuncio com esses filtros.</td></tr>';
@@ -403,6 +417,61 @@ async function loadListings() {
       <td class="src">${esc(l.source)}</td>
     </tr>`).join('');
 }
+
+/* ---------------------------------------------------------------------------
+   EXPORTAR — planilha .xlsx da visualizacao atual, com links clicaveis
+
+   Comecou como CSV (ESTADO.md 2-P) e virou .xlsx (2-Q): CSV e so texto, nao
+   guarda largura de coluna nem link clicavel. As colunas estao em exportar.js
+   e o arquivo em xlsx.js — nenhum dos dois toca no DOM. Aqui fica so o que e
+   da TELA: as linhas visiveis, os filtros e a ordem.
+--------------------------------------------------------------------------- */
+
+const ORDEM_NOME = { fipe: '% da FIPE', preco: 'preço', km: 'km', ano: 'ano', novos: 'mais recentes' };
+
+/** Linha 1 da planilha: quem abrir o arquivo dias depois sabe que recorte e. */
+function descricaoVisualizacao() {
+  const filtros = [
+    recorte.source && `fonte ${fonteNome(recorte.source)}`,
+    recorte.uf && `estado ${UF_NOME[recorte.uf] ?? recorte.uf}`,
+    bandAtual && `km ${BAND_LABEL[bandAtual]}`,
+    cambioAtual && `câmbio ${CAMBIO_LABEL[cambioAtual] ?? cambioAtual}`,
+  ].filter(Boolean);
+  const direcao = ordem.campo === 'novos' ? '' : ` (${ordem.dir === 'asc' ? 'crescente' : 'decrescente'})`;
+  const n = linhasVisiveis.length;
+  const d = new Date();
+  return [
+    `Anúncios ativos: ${n} anúncio${n === 1 ? '' : 's'}`,
+    filtros.length ? filtros.join(', ') : 'sem filtros',
+    `ordem: ${ORDEM_NOME[ordem.campo]}${direcao}`,
+    `exportado em ${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`,
+  ].join('  ·  ');
+}
+
+/** O nome do arquivo tambem diz qual visualizacao ele e: data, filtros e ordem. */
+function nomeExport() {
+  const d = new Date();
+  const data = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const partes = [
+    'anuncios', data, recorte.source, recorte.uf, bandAtual, cambioAtual,
+    `ordem-${ordem.campo}${ordem.dir === 'desc' && ordem.campo !== 'novos' ? '-desc' : ''}`,
+  ];
+  return `${partes.filter(Boolean).join('_')}.xlsx`;
+}
+
+function exportarPlanilha() {
+  if (!linhasVisiveis.length) return;
+  const bytes = planilhaAnuncios(linhasVisiveis, { info: descricaoVisualizacao(), fonte: fonteNome });
+  const blob = new Blob([bytes], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+  const url = URL.createObjectURL(blob);
+  const a = Object.assign(document.createElement('a'), { href: url, download: nomeExport() });
+  document.body.append(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+$('#export').addEventListener('click', exportarPlanilha);
 
 async function refresh() {
   await Promise.all([

@@ -69,6 +69,11 @@
             <option value="ano">ordenar por ano</option>
             <option value="novos">mais recentes</option>
           </select>
+          <!-- Exporta o que a tabela esta mostrando AGORA (filtros + ordem)
+               numa planilha .xlsx, com link clicavel em cada anuncio. O app.js
+               le as linhas ja carregadas, sem nova chamada a API. Nasce
+               desabilitado ate a 1a carga. -->
+          <button id="export" type="button" class="btn-export" disabled>Exportar planilha</button>
         </div>
       </div>
       <div class="bands"><span class="bands-label">km</span><div id="bands" class="chips"></div></div>

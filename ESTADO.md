@@ -5,7 +5,7 @@
 > o que já foi verificado de verdade, o que só foi escrito mas nunca testado, e
 > qual é o próximo passo exato.
 
-**Última atualização:** 2026-09-10 (sessão 6 — projeto publicado em github.com/SonyMainardi/consulta-carros; **as TRÊS fontes coletando** (2-H, 2-J), primeira rodada completa às 00:03; painel ganhou botões por portal, filtros de estado/fonte (2-I), ordenação por clique no cabeçalho (2-K) e **tetos de exibição de preço/km** (2-L). A coleta agendada das 9h **não rodou pela 2ª vez** — 2-G)
+**Última atualização:** 2026-09-15 (sessão 8 — botão **Exportar planilha** na tabela de ativos: começou CSV (2-P) e virou **.xlsx com colunas na largura certa e links clicáveis** (2-Q), validado abrindo no Excel. Sessão 7 — projeto subido localmente e conferido rota a rota, sem mudar código: 2-O. Antes disso, sessão 6 — projeto publicado em github.com/SonyMainardi/consulta-carros; **as TRÊS fontes coletando** (2-H, 2-J), primeira rodada completa às 00:03; painel ganhou botões por portal, filtros de estado/fonte (2-I), ordenação por clique no cabeçalho (2-K) e **tetos de exibição de preço/km** (2-L). A coleta agendada das 9h **não rodou pela 2ª vez** — 2-G)
 
 ---
 
@@ -20,7 +20,8 @@ km · URLs dos anúncios (usuário clicou e conferiu) · coleta das **três
 fontes** via navegador real · barra de progresso · **um botão de coleta por
 portal** · filtros de km, câmbio, estado (LOCAL) e portal (FONTE) ·
 ordenação por clique em ANO, KM, PREÇO e FIPE · teto de exibição
-(`PANEL_PRICE_MAX` / `PANEL_KM_MAX`, 100 mil cada).
+(`PANEL_PRICE_MAX` / `PANEL_KM_MAX`, 100 mil cada) · **exportar a
+visualização atual em planilha .xlsx, com links clicáveis** (2-P, 2-Q).
 
 **Última coleta:** 2026-09-10 00:03, **rodada completa pelo botão "Coletar
 tudo"** → Webmotors `OK` **64** (5min) · Mercado Livre `OK` **13** (2,6s) · OLX
@@ -2139,6 +2140,192 @@ documentar isso de novo: descrever a busca é fácil de esquecer.
 **Não assine commits deste projeto.** Nada de `Co-Authored-By`, nada de link de
 sessão, nada de menção à ferramenta em arquivo versionado — foi pedido direto do
 usuário, vale de agora em diante.
+
+---
+
+## 2-O. 2026-09-10 (sessão 7) — o projeto foi subido localmente e conferido
+
+Pedido do usuário: *"rode nosso projeto localmente"*. Nada de código mudou —
+esta seção registra o que foi verificado ao subir.
+
+**Como subiu:** `npm start` em `D:\Consulta de Carros`, com o `.env` que já
+estava lá (`PORT=3000`, `COLLECT_ON_BOOT=false`, `COLLECT_CRON=0 9 * * *`,
+`HTTP_USE_BROWSER=true`, `BROWSER_HEADLESS=false`).
+
+**Estado do ambiente na hora:** serviço `MySQL80` **Running**, porta 3000
+livre, Node v24.16.0.
+
+**Verificado de verdade** (não pela tela — pelo banco e pelas rotas):
+
+| Checagem | Resultado |
+|---|---|
+| `GET /` | HTTP 200, 7.438 bytes |
+| `GET /api/summary` | 75 no total, **70 ativos** (depois dos tetos de 2-L), 25 novos em 24h |
+| `GET /api/listings?sort=fipe` | devolve linhas; a mais barata em relação à FIPE é uma OLX 2013, 79.500 km, R$ 44.500 (**0,709**) |
+| `GET /api/fontes` | webmotors 47 · mercadolivre 13 · olx 10 |
+| `fetch_runs` (últimas 3) | `mercadolivre OK 13` · `olx OK 12` · `webmotors OK 64` — todas de **2026-09-10 00:03**, a rodada da sessão anterior |
+
+Ou seja: o painel está mostrando a coleta das 00:03, **não** uma coleta nova —
+subir o servidor não coleta nada, porque `COLLECT_ON_BOOT=false`. Continua
+valendo o aviso do topo: número no painel não é prova de coleta; a prova é
+`fetch_runs`.
+
+**Uma observação nova, pequena:** o servidor levou **~60 segundos** entre o
+`npm start` e o `painel em http://localhost:3000` no log. Nesse intervalo a
+porta 3000 ainda não estava escutando e o navegador dá "conexão recusada" — não
+é erro, é só a subida. Quem for testar logo depois de iniciar: espere o log
+dizer `painel em ...` antes de concluir que falhou.
+
+**A coleta das 9h de hoje:** o servidor só subiu às 12h05, então a rodada
+agendada das 9h não tinha ninguém de pé para disparar — é exatamente o problema
+já registrado em 2-G, e a 3ª vez que acontece. O agendador só existe enquanto
+`npm start` estiver rodando.
+
+---
+
+## 2-P. 2026-09-15 (sessão 8) — Exportar os anúncios ativos (CSV com links)
+
+Pedido do usuário: *"exportar os anuncios da tabela de ativos na visualização
+que ele estiver vendo com os links tambem"*.
+
+### O que entrou
+
+Botão **Exportar CSV** no cabeçalho do painel "Anúncios ativos", ao lado do
+select de ordenação (`#export` em `public/index.html`, `.btn-export` no
+`style.css`, `exportarCsv()` no `app.js`). **Nenhuma rota nova no servidor.**
+
+### A decisão: exportar as linhas que JÁ estão na tela
+
+O `loadListings()` guarda o que desenhou em `linhasVisiveis`, e a exportação lê
+dali. Não faz nova chamada à API. Com isso, o arquivo é **exatamente** a tabela:
+mesmos filtros (km, câmbio, LOCAL, FONTE), mesma ordem (critério + direção),
+mesmo limite de 200 e mesmos tetos de exibição de 2-L. Uma rota de exportação
+separada teria de repetir tudo isso, e um dia as duas sairiam de sincronia.
+
+O botão fica **desabilitado** quando a tabela está vazia, e o `title` diz
+quantos anúncios vão sair.
+
+### Formato — pensado para o Excel em português
+
+| Escolha | Por quê |
+|---|---|
+| separador `;` | o Excel pt-BR usa a vírgula como decimal e não separa por ela |
+| BOM UTF-8 no início | sem ele "Câmbio" e "São Paulo" viram lixo no Excel |
+| KM e preço como número cru (`98000`, `49900`) | dá para somar e ordenar na planilha |
+| FIPE com vírgula decimal (`-21,7`) | idem |
+| título que começa com `= + - @` ganha `'` na frente | título é texto de terceiro; senão o Excel o executaria como **fórmula** |
+
+Colunas: Anúncio · Ano · KM · Faixa de km · Câmbio · Preço (R$) · FIPE (%) ·
+Cidade · UF · Fonte · **Link**. O link vai em coluna própria, como texto: o
+Excel não o torna clicável sozinho num CSV. Fórmula `HIPERLINK` foi descartada
+porque o nome e o separador dela mudam com o idioma do Excel.
+
+Nome do arquivo = a visualização: `anuncios_<data>_<fonte>_<uf>_<faixa>_<cambio>_ordem-<campo>[-desc].csv`
+(só entram os filtros ativos). Ex.: `anuncios_2026-09-15_olx_ordem-preco-desc.csv`.
+
+### Dois erros achados antes de entregar
+
+1. **Preço saía `49900.00`.** A coluna é `DECIMAL` e o mysql2 a devolve como
+   texto; o Excel pt-BR leria o ponto como separador de milhar. Agora é
+   arredondado para inteiro (anúncio não tem centavos).
+2. **O `'` anti-fórmula pegaria o `-21,7` da FIPE**, que começa com `-`. Número
+   com vírgula passa sem apóstrofo.
+
+### Verificado no navegador, com o servidor que já estava de pé
+
+O download foi interceptado (blob lido direto na página) e comparado com a
+tabela renderizada:
+
+| Visualização | CSV | Tabela | Ordem e links iguais |
+|---|---|---|---|
+| padrão (ordem FIPE) | 68 linhas | 68 | ✔ |
+| FONTE = OLX, PREÇO decrescente | 13 linhas | 13 | ✔ (77890 · 72790 · 67900…) |
+
+Mais: BOM presente ✔ · 11 colunas em todas as linhas (nenhum `;` quebrou
+coluna) ✔ · só OLX no filtro de OLX ✔ · nome do arquivo com filtro e ordem ✔ ·
+**0 erros de console** ✔. **Não conferido:** abrir o arquivo no Excel de fato.
+
+> ⚠️ **Substituído no mesmo dia pela seção 2-Q** — o CSV saiu; o botão agora
+> gera `.xlsx`. O que continua valendo daqui: a exportação lê `linhasVisiveis`
+> (a tela), não a API.
+
+---
+
+## 2-Q. 2026-09-15 (sessão 8) — O CSV virou planilha .xlsx (largura certa e link clicável)
+
+Pedido do usuário, logo depois do 2-P: *"ajustar as colunas para que as
+informações não sejam cortadas, a não ser a coluna de links… ele só quer clicar
+nos links… deixar bem organizado"*.
+
+### Por que saiu do CSV
+
+CSV é só texto: **não guarda largura de coluna nem link clicável.** As duas
+coisas pedidas eram impossíveis no formato. Então o botão virou **Exportar
+planilha** e gera `.xlsx`.
+
+### Sem dependência nova
+
+O painel é HTML estático, sem build. Um `.xlsx` de uma aba com estilos fixos é
+um ZIP sem compressão com sete XMLs, e coube em `public/xlsx.js` (~250 linhas,
+CRC32 + ZIP "store" + planilha). Dois módulos novos, **nenhum toca no DOM**:
+
+| Arquivo | Papel |
+|---|---|
+| `public/xlsx.js` | genérico: recebe colunas tipadas + linhas, devolve os bytes do `.xlsx` |
+| `public/exportar.js` | as 11 colunas da planilha de anúncios (rótulos com acento) |
+| `public/app.js` | só o que é da tela: `linhasVisiveis`, filtros, ordem, nome do arquivo, download |
+
+Por não tocarem no DOM, dá para gerar a planilha **no Node com dado real** e
+abrir no Excel — foi como ela foi validada.
+
+### Como ficou a planilha
+
+- **Linha 1:** descrição da visualização, em itálico — ex.: *"Anúncios ativos:
+  39 anúncios · estado São Paulo · ordem: km (crescente) · exportado em
+  15/09/2026 às 15:44"*. Quem abrir o arquivo dias depois sabe que recorte é.
+- **Linha 2:** cabeçalho em negrito branco sobre o índigo do painel, **congelado**
+  e com **autofiltro**.
+- **Largura de cada coluna calculada pelo conteúdo** (pelo texto como o Excel o
+  exibe — "R$ 549.900", não 549900), com erro proposital para cima.
+- **Números são números:** KM `41.000`, preço `R$ 77.890`, FIPE `-21,7%` em
+  verde / `+5,2%` em vermelho — por formato de célula, então somam e ordenam.
+- **Link:** a célula mostra **"Abrir anúncio"**, azul sublinhado e clicável; a
+  URL fica no link (e no balão ao passar o mouse). Largura fixa no rótulo.
+- Título de anúncio vai como texto inline: **não existe risco de fórmula** no
+  `.xlsx` (no CSV existia). Caracteres de controle são removidos — um só, num
+  título, faria o Excel recusar o arquivo inteiro.
+
+### Três erros achados pela validação no Excel (via COM, `Excel.Application`)
+
+1. **Folga do cabeçalho pequena demais.** Com +4 caracteres, "Ano", "UF",
+   "Câmbio" e "Faixa de km" ficavam encostados no botão do filtro. A primeira
+   checagem tinha tolerância de 2 e **mascarou** isso; refeita sem tolerância.
+2. **Cabeçalho centralizado precisa de folga dos dois lados** (+9, não +6).
+3. **Cabeçalho alinhado à direita fica embaixo do botão do filtro.** Na foto da
+   janela do Excel, "KM" aparecia "K", "Preço" "Pre", "FIPE" "FI". **O AutoFit do
+   Excel não conta o botão**, então só a foto mostrou. Solução: cabeçalho de
+   coluna numérica é **centralizado** (os centralizados já estavam perfeitos na
+   mesma foto).
+
+Mais um, de ferramenta: o `Write` gravou os ` …` da regex de limpeza
+como **bytes de controle crus** no `xlsx.js` (o `grep` passou a chamar o arquivo
+de binário). Funcionava, mas era frágil; reescritos como escapes `\uXXXX`.
+
+### Verificado
+
+| Checagem | Resultado |
+|---|---|
+| Excel abre sem reparo | ✔ dois arquivos (padrão 69 linhas, OLX/preço-desc 13) |
+| painel congelado na linha 2 · autofiltro · nº de links | ✔ · ✔ · 69 e 13 |
+| largura ≥ AutoFit do Excel (dado e cabeçalho + botão) | ✔ nenhuma coluna corta |
+| título hostil `=HYPERLINK("x") <b>&"teste"</b>` + caractere de controle | ✔ virou texto, `HasFormula = False` |
+| URL com `&` na querystring | ✔ link íntegro |
+| botão no painel (navegador): padrão e LOCAL=SP + ordem KM | ✔ 68 e 39 links, **mesma ordem e mesmas URLs da tabela**, nome `…_SP_ordem-km.xlsx`, 0 erros de console |
+
+**Não conferido a olho depois da última correção** (cabeçalhos numéricos
+centralizados): a 2ª foto pegou outra janela que estava na frente do Excel, e
+foi descartada. A correção reusa o estilo que a 1ª foto mostrou funcionando.
+Scripts de validação ficaram no scratchpad da sessão, não no projeto.
 
 ---
 

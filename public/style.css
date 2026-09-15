@@ -306,6 +306,21 @@ select,
 }
 select:hover { border-color: var(--indigo-4); }
 
+/* Exportar [JS: #export]. Mesma altura e borda do select ao lado, para os dois
+   lerem como uma linha de controles; indigo so no hover, como o resto. */
+.btn-export {
+  background: var(--bg);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  padding: 6px 12px;
+  font: 12.5px var(--font);
+  cursor: pointer;
+  transition: var(--t-bd), var(--t-bg);
+}
+.btn-export:hover:not(:disabled) { border-color: var(--indigo-4); color: var(--indigo-3); }
+.btn-export:disabled { color: var(--text-4); cursor: default; }
+
 /* =============================================================================
    O QUE MUDOU  [JS: #events, .event, .event-body, .tag + variantes, .meta,
    .empty]
