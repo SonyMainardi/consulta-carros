@@ -58,6 +58,11 @@
 
   --t-bg: background-color .15s linear;
   --t-bd: border-color .15s linear;
+
+  /* A forma do coracao dos favoritos, usada como MASCARA: a cor vem do texto.
+     Cheio = guardado; vazio = o mesmo desenho, so o contorno. */
+  --coracao-cheio: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21C12 21 3 15 3 8.8 3 6 5.2 4 7.8 4c1.8 0 3.3 1 4.2 2.4C12.9 5 14.4 4 16.2 4 18.8 4 21 6 21 8.8 21 15 12 21 12 21z'/%3E%3C/svg%3E");
+  --coracao-vazio: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M12 21C12 21 3 15 3 8.8 3 6 5.2 4 7.8 4c1.8 0 3.3 1 4.2 2.4C12.9 5 14.4 4 16.2 4 18.8 4 21 6 21 8.8 21 15 12 21 12 21z' fill='none' stroke='black' stroke-width='2' stroke-linejoin='round'/%3E%3C/svg%3E");
 }
 
 * { box-sizing: border-box; }
@@ -641,6 +646,171 @@ select:hover { border-color: var(--indigo-4); }
 .menu-item .n { font-size: 11.5px; opacity: .75; }
 
 /* =============================================================================
+   BUSCA EXIBIDA  [JS: #busca-atual, #gerenciar-buscas]
+   ========================================================================== */
+
+/* A BARRA DE BUSCA [JS: public/busca.js]
+
+   Uma linha com marca, modelo e os limites; a segunda com versao, portais e o
+   botao de acompanhar. Em tela estreita `flex-wrap` quebra sozinho, e por isso
+   cada campo tem largura propria em vez de uma grade fixa: a quebra fica no
+   lugar certo qualquer que seja a largura. */
+.busca-bar { margin-bottom: 14px; }
+.form-busca {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 12px; border: 1px solid var(--border); border-radius: var(--r-card);
+  background: var(--card);
+}
+.busca-linha { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.busca-linha > input, .busca-linha > select {
+  padding: 8px 10px; color: var(--text); font-size: 13.5px;
+  border: 1px solid var(--border); border-radius: var(--r-chip); background: var(--bg);
+}
+/* Marca e modelo sao o assunto: ficam maiores que os limites numericos. */
+.f-carro { min-width: 190px; flex: 1 1 190px; }
+.busca-linha > input[type="number"] { width: 118px; }
+#f-versao { flex: 1 1 260px; min-width: 200px; }
+.busca-linha-2 { gap: 12px; }
+.busca-portais { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+#btn-buscar { padding: 8px 20px; }
+#btn-acompanhar.on { border-color: var(--indigo-4); color: var(--indigo-on); }
+
+/* A frase que diz DE QUANDO e o que esta na tela. Nao e decoracao: sem ela o
+   painel mostra cache velho com cara de dado fresco — que ja enganou o usuario
+   duas vezes (ESTADO.md, "a tela engana"). */
+.busca-aviso {
+  margin: 0; padding: 7px 10px;
+  font-size: 12.5px; color: var(--text-2);
+  border-radius: var(--r-chip); background: var(--bg);
+  border: 1px solid var(--border);
+}
+.busca-aviso.ok { color: var(--text-2); }
+.busca-aviso.alerta { border-color: var(--indigo-4); color: var(--text); }
+.busca-aviso.erro { border-color: var(--red); color: var(--text); }
+
+/* Botoes da barra e da modal [JS: .btn-pri .btn-sec .btn-link .perigo .confirmando]. */
+.btn-pri, .btn-sec {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 8px 14px;
+  border-radius: var(--r-chip);
+  font: 600 12.5px/1 var(--font);
+  cursor: pointer;
+  transition: var(--t-bg), var(--t-bd);
+}
+.btn-pri { background: var(--indigo-on); color: #fff; border: 1px solid var(--indigo); }
+.btn-pri:hover:not(:disabled) { background: var(--indigo-4); }
+.btn-sec { background: var(--bg); color: var(--text-2); border: 1px solid var(--border); font-weight: 500; }
+.btn-sec:hover:not(:disabled) { border-color: var(--indigo-4); color: var(--text); }
+.btn-pri:disabled, .btn-sec:disabled { opacity: .5; cursor: default; }
+
+.btn-link {
+  padding: 2px 0;
+  background: none; border: none;
+  color: var(--indigo-2); font: 12px var(--font);
+  cursor: pointer;
+}
+.btn-link:hover { text-decoration: underline; }
+/* Excluir fica discreto ate o hover; o 1o clique vira "Confirmar exclusao" em
+   vermelho — sem confirm() do navegador, que trava a pagina. */
+.btn-link.perigo { color: var(--text-3); }
+.btn-link.perigo:hover, .btn-link.confirmando { color: var(--red); }
+.btn-link.confirmando { font-weight: 700; }
+
+/* Caixinha de marcar [JS: .chk — os portais da barra de busca]. */
+.chk { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); font-size: 12.5px; cursor: pointer; }
+.chk input { width: 15px; height: 15px; accent-color: var(--indigo); }
+
+
+/* =============================================================================
+   FAVORITOS  [JS: public/favoritos.js — #btn-favoritos, #fav-contagem,
+   #favoritos, #fav-total, #fav-fechar, #fav-lista, #fav-nota, .fav, .fav.on,
+   .ic-coracao, .btn-favoritos.tem, .fav-item, .fav-item.removido,
+   .tag.NO_AR, .tag.NAO_VISTO]
+
+   O vermelho do coracao cheio e o da marca (a faixa do topo, a barra do nome),
+   nao o de alerta. Coracao e a convencao dos tres portais para "favorito" — e
+   nao compete com a estrela, que ja e do ☆ Acompanhar (um CARRO, nao um
+   anuncio).
+   ========================================================================== */
+
+.ic-coracao {
+  display: inline-block; flex-shrink: 0;
+  width: 15px; height: 15px;
+  background: currentColor;
+  -webkit-mask: var(--coracao-vazio) center / contain no-repeat;
+          mask: var(--coracao-vazio) center / contain no-repeat;
+}
+.fav.on .ic-coracao,
+.btn-favoritos.tem .ic-coracao {
+  -webkit-mask-image: var(--coracao-cheio);
+          mask-image: var(--coracao-cheio);
+}
+
+/* O botao do topo: secundario, com a mesma cara dos botoes de portal. */
+.btn-favoritos {
+  margin-left: auto;
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 9px 13px;
+  background: var(--bg);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-chip);
+  font: 500 12px/1 var(--font);
+  letter-spacing: .02em;
+  cursor: pointer;
+  transition: var(--t-bg), var(--t-bd);
+}
+.btn-favoritos:hover { background: var(--card-hover); border-color: var(--indigo-4); color: var(--text); }
+/* Painel aberto: a borda diz, como em qualquer selecao do painel. */
+.btn-favoritos.on { border-color: var(--indigo); color: var(--indigo-3); }
+.btn-favoritos.tem .ic-coracao { color: var(--red); }
+.btn-favoritos .n { font-size: 11.5px; opacity: .75; }
+
+/* O coracao de cada linha. A margem negativa devolve o recuo que o proprio
+   botao cria, para o coracao ficar alinhado com o titulo da coluna. */
+.fav {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; margin: 0 6px 0 -6px; padding: 0;
+  vertical-align: middle;
+  background: none; border: none; border-radius: 50%;
+  color: var(--text-4);
+  cursor: pointer;
+  transition: var(--t-bg), color .15s linear;
+}
+.fav:hover { background: var(--indigo-bg); color: var(--text-2); }
+/* Depois do :hover de proposito: guardado continua vermelho com o mouse em cima. */
+.fav.on { color: var(--red); }
+.fav:disabled { cursor: default; opacity: .6; }
+
+.panel-head h2 .n { margin-left: 6px; color: var(--text-3); font-weight: 400; letter-spacing: 0; }
+
+/* A linha do painel e a do "O que mudou" com uma terceira coluna: o coracao. */
+.fav-item { grid-template-columns: 104px 1fr auto; }
+.fav-item > .fav { align-self: center; margin: 0; }
+/* Aqui a linha de detalhes QUEBRA em vez de cortar: e nela que estao o "visto
+   ha" e o "guardado em", e eles nao podem sumir em reticencias. */
+.fav-item .meta { white-space: normal; }
+/* O link do carro, dentro dos detalhes. Sem isto herdaria o `.event a` (bloco,
+   negrito) e quebraria a linha no meio. */
+.fav-item .meta a {
+  display: inline; font-weight: inherit;
+  color: var(--text-2); text-decoration: underline dotted;
+}
+.fav-item .meta a:hover { color: var(--indigo-2); }
+/* Tirado pelo proprio painel: fica apagado ate a proxima carga — o coracao
+   continua aceso para clique, e um clique errado se desfaz no mesmo lugar. */
+.fav-item.removido > :not(.fav) { opacity: .4; }
+
+.tag.NO_AR     { color: var(--teal);   background: rgba(128, 203, 196, .12); border-color: rgba(128, 203, 196, .40); }
+.tag.NAO_VISTO { color: var(--text-3); background: rgba(143, 143, 168, .12); border-color: var(--border); }
+
+.fav-nota {
+  margin: 0; padding: 9px 16px;
+  color: var(--text-4); font-size: 12px;
+  border-top: 1px solid var(--border-row);
+}
+
+/* =============================================================================
    RESPONSIVO
    ========================================================================== */
 
@@ -649,8 +819,23 @@ select:hover { border-color: var(--indigo-4); }
   .wrap { padding: 16px 14px 32px; }
 
   .actions { margin-left: 0; width: 100%; }
+  /* Favoritos sobe para a linha do nome, a direita; a coleta desce inteira. */
+  .actions { order: 2; }
   .collect-group { width: 100%; }
   /* So o principal estica: os de fonte ficam do tamanho do nome, senao cada
      um vira uma faixa larga e o cabecalho ocupa meia tela no celular. */
   .collect[data-source=""] { flex: 1; }
+
+  /* Favoritos no celular: a etiqueta sobe para uma linha propria. Com a coluna
+     de 104px ao lado, sobravam ~170px para o titulo e ele virava reticencias. */
+  .fav-item { grid-template-columns: 1fr auto; row-gap: 6px; }
+  .fav-item > .tag { justify-self: start; min-width: 0; }
+  .fav-item > .event-body { grid-column: 1; }
+  .fav-item > .fav { grid-column: 2; grid-row: 1 / span 2; }
+
+  /* No celular cada campo da busca ocupa a linha: com 6 campos numa faixa de
+     360px, nenhum fica clicavel. Marca e modelo continuam no topo. */
+  .busca-linha > input, .busca-linha > select, .busca-linha > input[type="number"] { width: 100%; flex: 1 1 100%; }
+  .busca-portais { width: 100%; }
+  #btn-buscar { width: 100%; }
 }

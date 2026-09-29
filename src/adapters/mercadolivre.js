@@ -22,7 +22,7 @@
 // mostra na hora se as pistas sumiram.
 import { getPageHtml } from '../http/browser.js';
 import { getHtml } from '../http/client.js';
-import { AdapterError, sourceParams } from './base.js';
+import { AdapterError, sourceParams, divergenciaDeCaminho } from './base.js';
 import { config } from '../config.js';
 import { setStep } from '../core/progress.js';
 import { createLogger } from '../logger.js';
@@ -55,8 +55,15 @@ const slug = (s) =>
  */
 function buildUrl(watch, extra) {
   if (extra.url) return extra.url;
-  const partes = [CATEGORIA, slug(watch.brand), slug(watch.model)].filter(Boolean);
+  // Slugs da busca (watches.params), gravados por src/core/marcas.js.
+  const partes = [CATEGORIA, extra.marca ?? slug(watch.brand), extra.modelo ?? slug(watch.model)].filter(Boolean);
   return `${HOST}${partes.join('/')}/`;
+}
+
+/** "169 resultados" — o total que o proprio ML informa para a busca. */
+export function extractTotal(html) {
+  const m = String(html ?? '').match(/quantity-results[^>]*>([0-9.]+) resultado/);
+  return m ? Number(m[1].replace(/\./g, '')) : null;
 }
 
 const ENTIDADES = { amp: '&', quot: '"', '#39': "'", apos: "'", lt: '<', gt: '>', nbsp: ' ' };
@@ -212,6 +219,9 @@ export function extractItems(html) {
 export const mercadolivre = {
   name: 'mercadolivre',
   verified: true,
+  // Formato do endereco, para o painel mostrar a URL de cada busca. E o mesmo
+  // de buildUrl(); mudar um exige mudar o outro.
+  endereco: 'https://lista.mercadolivre.com.br/veiculos/carros-caminhonetes/{marca}/{modelo}/',
 
   async search(watch) {
     const extra = sourceParams(watch, 'mercadolivre');
@@ -225,7 +235,22 @@ export const mercadolivre = {
       : await getHtml(url);
 
     const html = res.html ?? res.text ?? '';
+
+    // A pagina e a busca pedida? O ML declara o canonical da listagem; slug
+    // errado costuma cair em outra listagem ou numa busca textual.
+    const divergencia = divergenciaDeCaminho(url, { html, urlFinal: res.url });
+    if (divergencia) {
+      throw new AdapterError(
+        `o Mercado Livre nao devolveu a busca ${url}: ${divergencia} — a marca ou o modelo tem outro endereco no ML`,
+        {
+          source: 'mercadolivre',
+          hint: 'Corrija o slug do Mercado Livre na busca (Coletar tudo > Editar > endereco em cada portal).',
+        },
+      );
+    }
+
     const items = extractItems(html);
+    const total = extractTotal(html);
 
     if (!items.length) {
       throw new AdapterError(
@@ -238,12 +263,14 @@ export const mercadolivre = {
     }
 
     // Uma pagina. Paginar exigiria `_Desde_51`, que o robots.txt proibe.
-    const resumo = `pagina 1: ${items.length} anuncios`;
+    const resumo = `pagina 1: ${items.length} anuncios${total ? ` (a busca tem ${total})` : ''}`;
     log.info(`${resumo} em ${url}`);
     setStep(`mercadolivre ${resumo}`, {
-      page: 1, totalPages: 1, collected: items.length, total: items.length,
+      page: 1, totalPages: 1, collected: items.length, total: total ?? items.length,
     });
 
-    return items;
+    // Cobre a busca inteira so quando ela cabe numa pagina (o Lancer tem 169
+    // no ML, 48 por pagina: parcial).
+    return { itens: items, total, paginas: 1, completa: total != null && items.length >= total };
   },
 };

@@ -21,23 +21,62 @@
     </h1>
 
     <div class="actions">
-      <!-- Um botao por portal, para poder testar UMA fonte sem rodar as tres
-           (pedido do usuario em 2026-09-09). O primeiro roda todas; os outros
-           sao injetados pelo app.js a partir de /api/sources, porque a lista de
-           adapters e do servidor — nao vale duplicar aqui e sair de sincronia.
+      <!-- ATUALIZAR: forca a coleta do carro que esta na tela, ignorando o
+           frescor do cache. A busca normal ja coleta sozinha quando o cache
+           esta velho (ESTADO.md 2-X) — este botao e para quem quer AGORA.
+
+           Um botao por portal, para poder testar UMA fonte sem rodar as tres
+           (pedido do usuario em 2026-09-09). Os de portal sao injetados pelo
+           app.js a partir de /api/sources, porque a lista de adapters e do
+           servidor — nao vale duplicar aqui e sair de sincronia.
 
            Em cada botao: <i class="bar"> e o preenchimento da barra e o texto
            mora em <span class="rotulo">. O partesBotao() do app.js procura
            essas duas classes. -->
       <div id="collect-group" class="collect-group">
-        <button class="collect" data-source="" data-rotulo="Coletar tudo">
-          <i class="bar"></i><i class="spin" aria-hidden="true"></i><span class="rotulo">Coletar tudo</span>
+        <button class="collect" data-source="" data-rotulo="Atualizar" disabled
+                title="coletar agora este carro, nos portais marcados">
+          <i class="bar"></i><i class="spin" aria-hidden="true"></i><span class="rotulo">Atualizar</span>
         </button>
       </div>
     </div>
+
+    <!-- FAVORITOS: abre e fecha o painel dos anuncios guardados
+         (public/favoritos.js). Fica fora de .actions de proposito: aquilo e
+         coleta, isto nao. O coracao enche quando ha favorito. -->
+    <button id="btn-favoritos" type="button" class="btn-favoritos"
+            aria-expanded="false" aria-controls="favoritos"
+            title="os anúncios que você guardou">
+      <i class="ic-coracao" aria-hidden="true"></i><span>Favoritos</span><span id="fav-contagem" class="n">0</span>
+    </button>
   </header>
 
   <main class="wrap">
+    <!-- FAVORITOS [JS: public/favoritos.js]. A unica parte da pagina que NAO e
+         do carro da busca: junta os anuncios guardados de qualquer carro. Nasce
+         fechado; o botao do topo abre, e o navegador lembra a escolha. -->
+    <section id="favoritos" class="panel" aria-label="Favoritos" hidden>
+      <div class="panel-head">
+        <h2>Favoritos <span id="fav-total" class="n"></span></h2>
+        <button id="fav-fechar" type="button" class="btn-link">fechar</button>
+      </div>
+      <div id="fav-lista" class="events"></div>
+      <!-- A tela engana (ESTADO.md): preco e situacao sao os da ultima coleta
+           de cada carro, e o "visto ha" de cada linha diz de quando. -->
+      <p id="fav-nota" class="fav-nota" hidden>
+        Preço e situação são os da última coleta de cada carro — o “visto há” de
+        cada linha diz de quando. Para atualizar um favorito, busque o carro dele.
+      </p>
+    </section>
+
+    <!-- A BUSCA. Todo o conteudo desta pagina (cartoes, "O que mudou", tabela,
+         filtros e exportacao) e do que foi pedido aqui. O formulario inteiro e
+         do public/busca.js; este <section> e so o lugar onde ele nasce.
+
+         Nao ha busca salva: o que foi pedido vive na URL, e por isso um link
+         desta pagina reproduz a mesma busca na maquina de outra pessoa. -->
+    <section id="busca-bar" class="busca-bar" aria-label="Buscar um carro"></section>
+
     <section id="summary" class="cards"></section>
 
     <section class="panel">

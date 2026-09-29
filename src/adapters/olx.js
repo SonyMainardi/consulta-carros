@@ -17,7 +17,7 @@
 // TRANSPORTE: navegador real, sempre. O fetch do Node bate no Cloudflare.
 import { getPageHtml } from '../http/browser.js';
 import { getHtml } from '../http/client.js';
-import { AdapterError, sourceParams } from './base.js';
+import { AdapterError, sourceParams, divergenciaDeCaminho } from './base.js';
 import { norm } from '../core/normalize.js';
 import { config } from '../config.js';
 import { setStep } from '../core/progress.js';
@@ -43,7 +43,9 @@ const CATEGORIA = '/autos-e-pecas/carros-vans-e-utilitarios';
  */
 function buildPath(watch, extra) {
   if (extra.path) return extra.path;
-  const partes = [CATEGORIA, slug(watch.brand), slug(watch.model)].filter(Boolean);
+  // Slugs da busca (watches.params). A OLX foge do padrao em algumas marcas —
+  // Volkswagen e `vw-volkswagen` — e quem sabe disso e src/core/marcas.js.
+  const partes = [CATEGORIA, extra.marca ?? slug(watch.brand), extra.modelo ?? slug(watch.model)].filter(Boolean);
   return partes.join('/');
 }
 
@@ -232,6 +234,9 @@ export function mapAd(ad) {
 export const olx = {
   name: 'olx',
   verified: true,
+  // Formato do endereco, para o painel mostrar a URL de cada busca. E o mesmo
+  // caminho de buildPath(); mudar um exige mudar o outro.
+  endereco: 'https://www.olx.com.br/autos-e-pecas/carros-vans-e-utilitarios/{marca}/{modelo}',
 
   async search(watch) {
     const extra = sourceParams(watch, 'olx');
@@ -248,9 +253,26 @@ export const olx = {
       : await getHtml(url);
 
     const html = res.html ?? res.text ?? '';
+
+    // Slug errado nao da 404 na OLX: a pagina cai em outra listagem. O canonical
+    // que a propria pagina declara diz qual busca ela e.
+    const divergencia = divergenciaDeCaminho(path, { html, urlFinal: res.url });
+    if (divergencia) {
+      throw new AdapterError(
+        `a OLX nao devolveu a busca ${path}: ${divergencia} — a marca ou o modelo tem outro endereco na OLX`,
+        {
+          source: 'olx',
+          hint: 'Corrija o slug da OLX na busca (Coletar tudo > Editar > endereco em cada portal). Ex.: Volkswagen na OLX e vw-volkswagen.',
+        },
+      );
+    }
+
     const ads = extractAds(html);
+    const total = extractTotal(html);
 
     if (!ads.length) {
+      // Busca que existe e esta vazia: nada a gravar, e nada pode "sair do ar".
+      if (total === 0) return { itens: [], total: 0, paginas: 1, completa: true };
       throw new AdapterError(
         `nenhum anuncio extraido de ${url} — pagina de challenge, caminho errado ou formato novo`,
         {
@@ -260,11 +282,14 @@ export const olx = {
       );
     }
 
-    const total = extractTotal(html);
     const resumo = `pagina 1: ${ads.length} anuncios${total ? ` (a busca tem ${total})` : ''}`;
     log.info(`${resumo} em ${path}`);
     setStep(`olx ${resumo}`, { page: 1, totalPages: 1, collected: ads.length, total: total ?? ads.length });
 
-    return ads.map(mapAd).filter((a) => a.externalId && a.externalId !== 'undefined' && a.url);
+    const itens = ads.map(mapAd).filter((a) => a.externalId && a.externalId !== 'undefined' && a.url);
+    // Uma pagina so cobre a busca inteira quando a busca cabe nela. O Lancer tem
+    // 447 anuncios na OLX contra ~50 por pagina: parcial, e quem cai para a
+    // pagina 2 NAO saiu do ar (ESTADO.md 2-R, item 3).
+    return { itens, total, paginas: 1, completa: total != null && itens.length >= total };
   },
 };

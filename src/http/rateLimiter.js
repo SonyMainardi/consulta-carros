@@ -1,6 +1,6 @@
 // Serializa requisicoes por host, com intervalo minimo + jitter aleatorio.
 // Cada host tem sua propria fila: fontes diferentes nao esperam umas pelas outras.
-import { config } from '../config.js';
+import { ritmoDoHost } from '../config.js';
 
 const lastHit = new Map(); // host -> timestamp da ultima batida
 const queues = new Map(); // host -> Promise (cadeia serial)
@@ -8,8 +8,12 @@ const queues = new Map(); // host -> Promise (cadeia serial)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export function acquire(host, opts = {}) {
-  const minInterval = opts.minIntervalMs ?? config.http.minIntervalMs;
-  const jitter = opts.jitterMs ?? config.http.jitterMs;
+  // Cada host pode ter ritmo proprio (config.http.porHost): o Webmotors e o
+  // unico que pagina e anda em 30-40 s desde 2026-09-15, enquanto o padrao dos
+  // outros segue em 60-80 s.
+  const ritmo = ritmoDoHost(host);
+  const minInterval = opts.minIntervalMs ?? ritmo.minIntervalMs;
+  const jitter = opts.jitterMs ?? ritmo.jitterMs;
 
   const prev = queues.get(host) ?? Promise.resolve();
   const next = prev.then(async () => {

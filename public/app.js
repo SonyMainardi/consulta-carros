@@ -1,29 +1,12 @@
 import { planilhaAnuncios } from './exportar.js';
-
-const $ = (sel) => document.querySelector(sel);
-const api = (path) => fetch(path).then((r) => r.json());
-
-const brl = (v) =>
-  v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL', maximumFractionDigits: 0 });
-
-const num = (v) => (v == null ? '—' : Number(v).toLocaleString('pt-BR'));
-
-const ago = (iso) => {
-  const mins = Math.floor((Date.now() - new Date(iso)) / 60000);
-  if (mins < 1) return 'agora';
-  if (mins < 60) return `${mins} min`;
-  const hrs = Math.floor(mins / 60);
-  if (hrs < 24) return `${hrs}h`;
-  return `${Math.floor(hrs / 24)}d`;
-};
+import { $, api, brl, num, ago, esc, fonteNome, ordenarFontes, preferencia } from './comum.js';
+import { iniciarBusca, carroAtual, portaisEscolhidos, paraQuery } from './busca.js';
+import { iniciarFavoritos, carregarFavoritos, coracao } from './favoritos.js';
 
 const LABELS = {
   NEW: 'novo', PRICE_DROP: 'baixou', PRICE_UP: 'subiu',
   DISAPPEARED: 'saiu do ar', RELISTED: 'reanunciado', KM_CHANGED: 'km mudou',
 };
-
-const esc = (s) =>
-  String(s ?? '').replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 /** Renderiza o % em relacao a FIPE, que e a coluna que importa. */
 function fipeCell(ratio) {
@@ -32,12 +15,6 @@ function fipeCell(ratio) {
   const cls = pct < 0 ? 'below' : 'above';
   return `<td class="num ${cls}">${pct > 0 ? '+' : ''}${pct.toFixed(1)}%</td>`;
 }
-
-// Nome de exibicao das fontes. O banco guarda o slug ('webmotors'); quem le o
-// painel merece o nome escrito certo, com acento e caixa.
-const FONTE_NOME = { webmotors: 'Webmotors', olx: 'OLX', mercadolivre: 'Mercado Livre' };
-
-const fonteNome = (slug) => FONTE_NOME[slug] ?? slug;
 
 // Cor semantica so no numero: o label continua secundario nos quatro cards.
 const CARDS = [
@@ -48,7 +25,7 @@ const CARDS = [
 ];
 
 async function loadSummary() {
-  const s = await api('/api/summary');
+  const s = await api(`/api/summary?${qsBusca()}`);
 
   $('#summary').innerHTML = CARDS.map((c) =>
     `<div class="card">
@@ -60,10 +37,17 @@ async function loadSummary() {
 
 async function loadEvents() {
   const type = $('#event-filter').value;
-  const events = await api(`/api/events?limit=60${type ? `&type=${type}` : ''}`);
+  const events = await api(`/api/events?${qsBusca({ limit: '60', type: type || null })}`);
 
   if (!events.length) {
-    $('#events').innerHTML = '<div class="empty">Nenhum evento ainda. Rode uma coleta.</div>';
+    // Evento exige coleta REPETIDA: uma busca ao vivo acontece uma vez, e nada
+    // muda entre uma vez so. Dizer "rode uma coleta" aqui seria mentir — por
+    // isso a mensagem aponta para o "Acompanhar" (ESTADO.md 2-X, regra 5).
+    $('#events').innerHTML = carroDaTela()?.acompanhado
+      ? '<div class="empty">Nada mudou ainda. Os eventos aparecem a partir da próxima coleta deste carro.</div>'
+      : '<div class="empty">Sem histórico: este carro não está sendo acompanhado. '
+        + 'Clique em <b>☆ Acompanhar</b> para ele passar a ser recoletado — é o que faz "novo", '
+        + '"baixou preço" e "saiu do ar" existirem.</div>';
     return;
   }
 
@@ -102,6 +86,28 @@ let cambioAtual = '';
 // de km. '' = sem recorte.
 const recorte = { uf: '', source: '' };
 
+/* ---------------------------------------------------------------------------
+   O QUE ESTA NA TELA — o carro pedido e o recorte (ESTADO.md 2-X)
+
+   Nao existe mais busca salva. Tudo no painel e do carro que a barra de busca
+   pediu, com o recorte (km, ano, preco, versao, portais) que ela mandou junto.
+   Quem manda nisso e o public/busca.js; aqui so se guarda o ultimo pedido, para
+   os cartoes, os chips, a tabela e a exportacao falarem todos do mesmo.
+
+   Os CHIPS da tabela (faixa de km, cambio, estado, portal) sao outra coisa:
+   refinam o que o recorte ja deixou entrar, e vivem so nesta tela.
+--------------------------------------------------------------------------- */
+let pedido = null; // { modelo, km, anoMin, anoMax, preco, versao, portais }
+
+/** Querystring do pedido — para cartoes e eventos, que nao usam os chips. */
+function qsBusca(extra = {}) {
+  const qs = pedido ? paraQuery(pedido) : new URLSearchParams();
+  for (const [k, v] of Object.entries(extra)) if (v != null) qs.set(k, v);
+  return qs;
+}
+
+const carroDaTela = () => carroAtual();
+
 const BAND_CLASS = { 'ate-50k': 'b1', '50k-70k': 'b2', '70k-100k': 'b3', 'acima-100k': 'b4' };
 const BAND_LABEL = {
   'ate-50k': 'ate 50 mil', '50k-70k': '50-70 mil',
@@ -130,7 +136,8 @@ const CAMBIO_LABEL = {
 /** Monta a querystring com os filtros ativos. `extra` sobrescreve; null remove —
  *  e assim que a contagem de um chip ignora ele mesmo e respeita os outros. */
 function filtrosQS(extra = {}) {
-  const qs = new URLSearchParams();
+  // O recorte do pedido vem primeiro; os chips sao acrescentados por cima.
+  const qs = pedido ? paraQuery(pedido) : new URLSearchParams();
   if (recorte.source) qs.set('source', recorte.source);
   if (bandAtual) qs.set('band', bandAtual);
   if (cambioAtual) qs.set('cambio', cambioAtual);
@@ -404,9 +411,12 @@ async function loadListings() {
     return;
   }
 
+  // O coracao mora na celula do ANUNCIO, e nao numa coluna propria: a grade da
+  // tabela e fixa (colgroup + larguras no CSS) e uma coluna nova mexeria em
+  // todas as outras.
   tbody.innerHTML = rows.map((l) => `
     <tr>
-      <td><a href="${esc(l.url)}" target="_blank" rel="noopener" title="${esc(l.title)}">${esc(l.title)}</a></td>
+      <td>${coracao(l, pedido?.modelo)}<a href="${esc(l.url)}" target="_blank" rel="noopener" title="${esc(l.title)}">${esc(l.title)}</a></td>
       <td class="num">${l.year_model ?? '—'}</td>
       <td class="num">${num(l.km)}</td>
       <td class="badge">${l.km_band ? `<span class="kmband ${BAND_CLASS[l.km_band]}">${BAND_LABEL[l.km_band]}</span>` : '—'}</td>
@@ -441,7 +451,7 @@ function descricaoVisualizacao() {
   const n = linhasVisiveis.length;
   const d = new Date();
   return [
-    `Anúncios ativos: ${n} anúncio${n === 1 ? '' : 's'}`,
+    `${carroDaTela()?.nome ?? 'Nenhum carro'}: ${n} anúncio${n === 1 ? '' : 's'} ativo${n === 1 ? '' : 's'}`,
     filtros.length ? filtros.join(', ') : 'sem filtros',
     `ordem: ${ORDEM_NOME[ordem.campo]}${direcao}`,
     `exportado em ${d.toLocaleDateString('pt-BR')} às ${d.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}`,
@@ -453,7 +463,8 @@ function nomeExport() {
   const d = new Date();
   const data = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
   const partes = [
-    'anuncios', data, recorte.source, recorte.uf, bandAtual, cambioAtual,
+    'anuncios', (carroDaTela()?.nome ?? 'carro').toLowerCase().replace(/[^a-z0-9]+/g, '-'),
+    data, recorte.source, recorte.uf, bandAtual, cambioAtual,
     `ordem-${ordem.campo}${ordem.dir === 'desc' && ordem.campo !== 'novos' ? '-desc' : ''}`,
   ];
   return `${partes.filter(Boolean).join('_')}.xlsx`;
@@ -474,6 +485,11 @@ function exportarPlanilha() {
 $('#export').addEventListener('click', exportarPlanilha);
 
 async function refresh() {
+  // Os favoritos nao dependem da busca: juntam anuncios de qualquer carro, e
+  // uma coleta que acabou de terminar pode ter mudado o preco de algum deles.
+  carregarFavoritos();
+  // Sem carro escolhido nao ha o que carregar: a tela fica esperando a busca.
+  if (!pedido?.modelo) return;
   await Promise.all([
     loadSummary(), loadEvents(), loadBands(), loadCambios(),
     menuUf.carregar(), menuFonte.carregar(), loadListings(),
@@ -537,20 +553,31 @@ function pintarProgresso(btn, p) {
   }
   btn.classList.remove('needs-human');
 
+  // Os portais rodam em paralelo: o numero da frente e quantas etapas da rodada
+  // ja terminaram, e o resto e do portal em destaque (o que pede uma pessoa,
+  // senao o que ainda trabalha). O title detalha portal por portal.
+  const etapa = p.etapas > 1 ? `${p.concluidas}/${p.etapas} · ` : '';
   if (p.totalPages && p.page) {
     btn.classList.remove('indeterminate');
     // Teto de 95%: os ultimos passos (gravar, FIPE, notificar) vem depois da
     // ultima pagina. Cravar 100% antes da hora e a mentira classica de barra.
-    const pct = Math.min(95, Math.round((p.page / p.totalPages) * 100));
+    const andado = p.concluidas + p.page / p.totalPages;
+    const pct = Math.min(95, Math.round((andado / Math.max(p.etapas, 1)) * 100));
     bar.style.width = `${pct}%`;
-    label.textContent = `Coletando ${p.page}/${p.totalPages}`;
+    label.textContent = `${etapa}${fonteNome(p.fonte) ?? 'Coletando'} ${p.page}/${p.totalPages}`;
   } else {
     btn.classList.add('indeterminate');
-    label.textContent = 'Coletando...';
+    label.textContent = p.fonte ? `${etapa}${fonteNome(p.fonte)}...` : 'Coletando...';
   }
 
-  const detalhe = p.collected != null && p.total != null ? ` — ${p.collected} de ${p.total}` : '';
-  btn.title = (p.step ?? '') + detalhe;
+  const linhaDoPortal = ([fonte, f]) => {
+    if (f.terminou) return `${fonteNome(fonte)}: concluído`;
+    if (!f.etapa) return `${fonteNome(fonte)}: na fila`;
+    const pagina = f.totalPages && f.page ? ` · página ${f.page}/${f.totalPages}` : '';
+    const achados = f.collected != null && f.total != null ? ` (${f.collected} de ${f.total})` : '';
+    return `${fonteNome(fonte)}: ${f.busca} ${f.etapa}/${f.etapas}${pagina}${achados}${f.needsHuman ? ' — CAPTCHA' : ''}`;
+  };
+  btn.title = Object.entries(p.fontes ?? {}).map(linhaDoPortal).join('\n') || (p.step ?? '');
 }
 
 async function acompanharColeta(btn) {
@@ -583,10 +610,21 @@ async function acompanharColeta(btn) {
       btn.classList.add('failed');
       label.textContent = 'Falhou — ver logs';
       btn.title = s.progress.error;
+    } else if (st?.failures) {
+      // Etapa que falhou (bloqueio, pagina que nao era da busca): vermelho, com
+      // o motivo no title. A modal mostra o mesmo, por portal.
+      btn.classList.add('failed');
+      label.textContent = `${st.failures} falha${st.failures === 1 ? '' : 's'} · +${st.new} novos`;
+      btn.title = (st.erros ?? []).join('\n');
     } else if (st) {
       btn.classList.add('done');
       label.textContent = `+${st.new} novos, ${st.drops} baixas`;
-      btn.title = JSON.stringify(st);
+      btn.title = [
+        `novos ${st.new} · baixas ${st.drops} · saíram do ar ${st.vanished} · reanunciados ${st.relisted}`,
+        st.parciais?.length
+          ? `cobertura parcial (quem não apareceu saiu da tela sem virar "saiu do ar"): ${st.parciais.join(', ')}`
+          : '',
+      ].filter(Boolean).join('\n');
     } else {
       btn.classList.add('done');
       label.textContent = 'Coleta concluida';
@@ -604,17 +642,25 @@ $('#collect-group').addEventListener('click', async (e) => {
   const btn = e.target.closest('.collect');
   if (!btn || btn.disabled) return;
 
+  // Sem carro na tela nao ha o que atualizar — o botao ja nasce desabilitado,
+  // mas o clique pode chegar por teclado antes da primeira busca.
+  const carro = carroDaTela();
+  if (!carro) return;
+
   const { label } = partesBotao(btn);
   btn.classList.add('collecting', 'indeterminate');
   travarBotoes();
   label.textContent = 'Iniciando...';
   try {
-    await fetch('/api/collect', {
+    await fetch('/api/coleta', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      // '' = todas as fontes. O servidor ja aceitava `source` desde o comeco;
-      // era o painel que so sabia pedir tudo.
-      body: JSON.stringify({ source: btn.dataset.source || null }),
+      // Botao de portal coleta so aquele; "Atualizar" coleta os que estao
+      // marcados na barra de busca.
+      body: JSON.stringify({
+        modelo: carro.id,
+        portais: btn.dataset.source ? [btn.dataset.source] : portaisEscolhidos(),
+      }),
     }).then((x) => x.json());
     // Vale acompanhar mesmo se `started` vier false: nesse caso ja existe uma
     // coleta em andamento, e o usuario quer ver o progresso dela do mesmo jeito.
@@ -629,7 +675,7 @@ $('#collect-group').addEventListener('click', async (e) => {
   }
 });
 
-// Se a pagina abrir no meio de uma coleta (a diaria das 9h, por exemplo),
+// Se a pagina abrir no meio de uma coleta (disparada em outra aba, por exemplo),
 // o botao ja entra no modo de acompanhamento em vez de mentir que esta livre.
 api('/api/summary')
   .then((s) => {
@@ -649,31 +695,53 @@ $('#sort').addEventListener('change', () => {
   loadListings();
 });
 pintarOrdem();
-// A ordem e a do interesse pratico, nao a que o servidor devolve: primeiro o
-// portal que funciona. Fonte nova que o servidor tiver e nao estiver aqui
-// entra no fim, em vez de sumir.
-const ORDEM_FONTES = ['webmotors', 'olx', 'mercadolivre'];
 
 api('/api/sources').then((sources) => {
   // Um botao por portal — pedido do usuario: testar uma fonte sem rodar as
   // tres. A lista vem do servidor de proposito; repetir os nomes das fontes no
   // HTML e garantir que um dia eles fiquem diferentes.
-  const ordenadas = [...sources].sort((a, b) => {
-    const ia = ORDEM_FONTES.indexOf(a);
-    const ib = ORDEM_FONTES.indexOf(b);
-    return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib);
-  });
+  const ordenadas = ordenarFontes(sources);
 
   $('#collect-group').insertAdjacentHTML(
     'beforeend',
     ordenadas.map((s) => {
       const rotulo = esc(fonteNome(s));
-      return `<button class="collect fonte" data-source="${esc(s)}" data-rotulo="${rotulo}" title="coletar so ${rotulo}">
+      return `<button class="collect fonte" data-source="${esc(s)}" data-rotulo="${rotulo}" title="atualizar este carro só no ${rotulo}">
                 <i class="bar"></i><i class="spin" aria-hidden="true"></i><span class="rotulo">${rotulo}</span>
               </button>`;
     }).join(''),
   );
 });
 
-refresh();
+// Antes da busca: o painel de favoritos e os coracoes nao esperam carro nenhum.
+iniciarFavoritos();
+
+/* ---------------------------------------------------------------------------
+   A BARRA DE BUSCA MANDA NO PAINEL
+
+   Cada busca respondida troca o carro e o recorte, recarrega tudo e — quando a
+   resposta veio de cache velho e o servidor enfileirou uma coleta — liga o
+   acompanhamento no botao, para a barra de progresso aparecer sem ninguem
+   precisar clicar em nada.
+--------------------------------------------------------------------------- */
+iniciarBusca({
+  aoBuscar: ({ campos, resposta }) => {
+    const trocouDeCarro = pedido?.modelo !== campos.modelo;
+    pedido = campos;
+    if (trocouDeCarro) {
+      // Chip de um carro nao vale no outro: o estado SP pode nem existir la.
+      bandAtual = '';
+      cambioAtual = '';
+      recorte.uf = '';
+      recorte.source = '';
+    }
+    document.querySelectorAll('#collect-group .collect').forEach((b) => { b.disabled = false; });
+    refresh();
+    if (resposta.coleta?.pedida) {
+      acompanharColeta(botaoDaFonte(resposta.coleta.portais.length === 1 ? resposta.coleta.portais[0] : null));
+    }
+  },
+});
+
+// A cada minuto, so se ja houver um carro na tela.
 setInterval(refresh, 60000);

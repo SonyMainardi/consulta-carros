@@ -1,6 +1,7 @@
 // Converte o que cada adapter devolve para o formato unico da tabela `listings`.
 // Toda sujeira de parsing (preco em string, km com ponto, ano "2019/2020")
 // morre aqui, nunca vaza para o resto do sistema.
+import { tokens, tokensVersao, contemSequencia, apelidosDaMarca } from './marcas.js';
 
 const ACCENTS = /[̀-ͯ]/g;
 
@@ -191,24 +192,95 @@ export function transmissionGroup(value) {
   return hit?.id ?? 'outro';
 }
 
-/** Filtro pos-coleta: as fontes ignoram parte dos filtros, entao conferimos aqui. */
-export function matchesWatch(listing, watch) {
-  if (watch.model && !norm(listing.title + ' ' + (listing.model ?? '')).includes(norm(watch.model))) {
-    return false;
-  }
-  if (watch.version_contains) {
-    const hay = norm(listing.title + ' ' + (listing.version ?? ''));
-    if (!hay.includes(norm(watch.version_contains))) return false;
-  }
-  const year = listing.year_model ?? listing.year_fab;
-  if (watch.year_min && (year == null || year < watch.year_min)) return false;
-  if (watch.year_max && (year == null || year > watch.year_max)) return false;
-  if (watch.price_max && (listing.price == null || listing.price > Number(watch.price_max))) return false;
-  if (watch.price_min && (listing.price == null || listing.price < Number(watch.price_min))) return false;
-  if (watch.km_max && listing.km != null && listing.km > watch.km_max) return false;
-  if (watch.uf) {
-    const wanted = String(watch.uf).split(',').map((u) => u.trim().toUpperCase()).filter(Boolean);
-    if (wanted.length && listing.uf && !wanted.includes(listing.uf)) return false;
-  }
-  return true;
+/**
+ * A marca pedida aparece no campo de marca ou no titulo, como palavra inteira,
+ * por qualquer um dos apelidos ("VW" ou "Volkswagen").
+ *
+ * Ate 2026-09-15 a marca nao era conferida — so o modelo. Com uma busca so, do
+ * Lancer, isso nunca fez falta.
+ */
+export function mesmaMarca(listing, carro) {
+  if (!carro.brand) return true;
+  const campo = tokens(listing.brand);
+  const titulo = tokens(listing.title);
+  // Os apelidos vem do CATALOGO (tabela `marcas`) desde 2026-09-16; a tabela em
+  // codigo de marcas.js so serve de reserva, para quem chamar sem o catalogo.
+  const apelidos = carro.apelidos?.length ? carro.apelidos : apelidosDaMarca(carro.brand);
+  return apelidos.some((apelido) => {
+    const alvo = tokens(apelido);
+    return contemSequencia(campo, alvo) || contemSequencia(titulo, alvo);
+  });
+}
+
+/**
+ * O modelo aparece como PALAVRA INTEIRA — ou sequencia de palavras, para
+ * "Onix Plus" e "HR-V". A versao anterior era `includes` em texto cru, e por
+ * isso "Gol" casaria com "Golf" e "Ka" com "Kardian".
+ */
+export function mesmoModelo(listing, carro) {
+  if (!carro.model) return true;
+  const alvo = tokens(carro.model);
+  return contemSequencia(tokens(listing.title), alvo) || contemSequencia(tokens(listing.model), alvo);
+}
+
+/**
+ * Por que o anuncio nao entra no cache DESTE carro — ou null, se entra.
+ *
+ * ATENCAO: desde 2026-09-16 (ESTADO.md 2-X) isto confere SO IDENTIDADE
+ * (marca + modelo). Km, preco, ano, versao e UF sairam daqui de proposito.
+ *
+ * Por que: nao existe mais "busca salva". A mesma coleta serve a todo mundo que
+ * pedir aquele carro, e cada pessoa escolhe o proprio recorte na hora de
+ * buscar. Se a coleta filtrasse por km, o cache so serviria a quem usasse o
+ * mesmo teto de km — e a proxima pessoa precisaria de uma coleta nova.
+ *
+ * O recorte de quem le esta em src/db/recorte.js, em SQL, e e a UNICA regra de
+ * recorte que existe. Antes eram duas (uma na coleta, outra na leitura) e elas
+ * precisavam concordar; agora nao ha como divergirem.
+ *
+ * Devolver o MOTIVO, e nao so true/false, e o que deixa o log da coleta dizer
+ * "descartados: modelo 31" em vez de um numero mudo.
+ */
+export function motivoDescarteColeta(listing, carro) {
+  if (!mesmaMarca(listing, carro)) return 'marca';
+  if (!mesmoModelo(listing, carro)) return 'modelo';
+  return null;
+}
+
+/**
+ * O valor da coluna `listings.texto_busca`: titulo + versao normalizados, com
+ * espaco nas pontas. E o que deixa o filtro de VERSAO virar SQL na leitura
+ * (`texto_busca LIKE '% gt %'`), continuando a casar palavra INTEIRA — "Gol"
+ * nao casa com "Golf" (ESTADO.md 2-S, regra 3).
+ *
+ * Usa tokensVersao(), nao tokens(): o ponto dentro de numero fica, para "2.0"
+ * nao virar "2" e "0" soltos.
+ */
+export function textoBusca(listing) {
+  const t = tokensVersao(`${listing.title ?? ''} ${listing.version ?? ''}`);
+  return t.length ? ` ${t.join(' ')} ` : null;
+}
+
+// Abaixo de 4 anuncios, proporcao nao diz nada: basta um ser do carro.
+const MINIMO_PARA_PROPORCAO = 4;
+const PROPORCAO_MINIMA = 0.5;
+
+/**
+ * A pagina que voltou e mesmo da busca pedida?
+ *
+ * Julga pelo CONTEUDO, como o esperarBuscaCerta do navegador: quantos anuncios
+ * sao da marca e do modelo pedidos, ignorando km, preco e ano (esses mudam o
+ * recorte, nao a identidade). Nas paginas salvas do Lancer, 100% dos anuncios
+ * da OLX, do ML e do Webmotors passam.
+ *
+ * Se o slug estiver errado e o portal devolver uma listagem generica, quase
+ * nada casa — e a coleta falha, em vez de marcar todos os anuncios da busca
+ * como vendidos.
+ */
+export function conferirIdentidade(listings, carro) {
+  const total = listings.length;
+  if (!total) return { ok: true, casam: 0, total: 0 };
+  const casam = listings.filter((l) => mesmaMarca(l, carro) && mesmoModelo(l, carro)).length;
+  const ok = total < MINIMO_PARA_PROPORCAO ? casam > 0 : casam / total >= PROPORCAO_MINIMA;
+  return { ok, casam, total };
 }

@@ -39,6 +39,39 @@ const SEARCH_API = '/api/search/car';
 
 let context = null;
 let chromium = null;
+// Uma aba por host: com os portais em paralelo, duas navegacoes na mesma aba se
+// atropelariam (e o ouvinte de resposta do Webmotors e da aba dele).
+const paginas = new Map(); // host -> Page
+// Fila de abertura de abas: ver acquirePage().
+let filaDeAbas = Promise.resolve();
+// Launch em andamento: dois trabalhadores podem pedir o navegador ao mesmo
+// tempo, e dois launches no mesmo perfil brigam pelo lock.
+let abrindo = null;
+
+// Quanto a coleta espera uma pessoa resolver um desafio na janela.
+const ESPERA_HUMANA_MS = 5 * 60 * 1000;
+
+/**
+ * Hosts com bloqueio que ninguem liberou NESTA rodada: desafio que expirou, ou
+ * janela que fechou com o desafio na tela. Ate o fim da rodada nenhuma pagina
+ * deles e pedida de novo — cada tentativa renova o bloqueio (CLAUDE.md, "Nao
+ * insista").
+ *
+ * Visto em 2026-09-15 21:01: a janela fechou durante o CAPTCHA do Webmotors e o
+ * retry automatico reabriu o navegador e voltou ao Webmotors no mesmo segundo,
+ * sem rate limit — CAPTCHA de novo.
+ */
+const hostsBloqueados = new Map(); // host -> guard
+
+function recusarSeBloqueado(url) {
+  const host = new URL(url).host;
+  const guard = hostsBloqueados.get(host);
+  if (!guard) return;
+  throw new HttpError(
+    `${host} mostrou bloqueio ${guard} nesta rodada e ninguem liberou — nao insisto ate a proxima coleta`,
+    { status: 403, url, guard },
+  );
+}
 
 /** Playwright e carregado sob demanda: quem nao usa o navegador nao paga por ele. */
 async function loadPlaywright() {
@@ -56,26 +89,68 @@ async function loadPlaywright() {
 
 async function getContext() {
   if (context) return context;
+  abrindo ??= abrirContexto().finally(() => { abrindo = null; });
+  return abrindo;
+}
+
+async function abrirContexto() {
   const cr = await loadPlaywright();
   if (!existsSync(USER_DATA_DIR)) mkdirSync(USER_DATA_DIR, { recursive: true });
 
   // Contexto persistente: os cookies do PerimeterX sobrevivem entre coletas, o
   // que reduz muito a chance de cair em desafio no dia seguinte.
-  context = await cr.launchPersistentContext(USER_DATA_DIR, {
-    headless: config.browser.headless,
-    locale: 'pt-BR',
-    timezoneId: 'America/Sao_Paulo',
-    viewport: { width: 1366, height: 768 },
-    args: ['--disable-blink-features=AutomationControlled'],
-  });
-  log.info(`navegador aberto (headless=${config.browser.headless}), sessao em data/browser/`);
-  return context;
+  //
+  // Ate 3 tentativas de abrir. Logo depois de um Chromium morrer, o perfil em
+  // data/browser/ fica preso por alguns segundos e o launch falha na hora
+  // ("exitCode=21"). Foi o que derrubou a OLX e o ML do Vectra em 2026-09-15
+  // 21:01: as duas etapas tentaram abrir o navegador 2 s depois de a janela
+  // fechar, e falharam sem nem chegar ao portal.
+  let ultimoErro;
+  for (let tentativa = 1; tentativa <= 3; tentativa += 1) {
+    try {
+      const ctx = await cr.launchPersistentContext(USER_DATA_DIR, {
+        headless: config.browser.headless,
+        locale: 'pt-BR',
+        timezoneId: 'America/Sao_Paulo',
+        viewport: { width: 1366, height: 768 },
+        args: ['--disable-blink-features=AutomationControlled'],
+      });
+      // Janela fechada a mao (ou crash): esquece o contexto na hora, em vez de
+      // descobrir so no proximo erro "Target closed".
+      ctx.on('close', () => {
+        if (context !== ctx) return;
+        context = null;
+        paginas.clear();
+      });
+      context = ctx;
+      log.info(`navegador aberto (headless=${config.browser.headless}), sessao em data/browser/`);
+      return context;
+    } catch (err) {
+      ultimoErro = err;
+      if (tentativa === 3) break;
+      const espera = tentativa * 4000;
+      log.warn(
+        `nao consegui abrir o navegador (tentativa ${tentativa}: ${String(err.message).split('\n')[0]}) ` +
+        `— espero ${espera / 1000}s: o perfil pode estar preso pelo Chromium anterior`,
+      );
+      await new Promise((r) => setTimeout(r, espera));
+    }
+  }
+  throw ultimoErro;
 }
 
-export async function closeBrowser() {
+/**
+ * Fecha o navegador. `fimDaRodada` tambem esquece os hosts bloqueados — a
+ * proxima coleta e outro clique, e pode tentar de novo. No meio da rodada
+ * (reabrir depois de um crash) a lista de bloqueados continua valendo.
+ */
+export async function closeBrowser({ fimDaRodada = false } = {}) {
+  if (fimDaRodada) hostsBloqueados.clear();
   if (!context) return;
-  await context.close().catch(() => {});
+  const ctx = context;
   context = null;
+  paginas.clear();
+  await ctx.close().catch(() => {});
   log.info('navegador fechado');
 }
 
@@ -84,21 +159,50 @@ const isClosedError = (err) =>
   /has been closed|target closed|browser has disconnected|crashed/i.test(err?.message ?? '');
 
 /**
- * Devolve uma aba utilizavel, reabrindo o contexto se ele tiver morrido.
- * Numa coleta de ~10 minutos com o navegador aberto, morrer no meio e um
- * evento esperado — nao uma excecao.
+ * A aba DESTE host, reabrindo o contexto se ele tiver morrido. Uma aba por
+ * host porque os portais rodam em paralelo; morrer no meio de uma coleta longa
+ * e evento esperado, nao excecao.
  */
-async function acquirePage() {
-  try {
+async function acquirePage(host) {
+  const atual = paginas.get(host);
+  if (atual && !atual.isClosed()) return atual;
+
+  // UMA ABERTURA DE CADA VEZ. Com os portais em paralelo, os tres pedem aba no
+  // mesmo instante: todos achavam a MESMA about:blank livre (o `paginas.set` so
+  // acontece depois do await) e acabavam na mesma aba, uma navegacao abortando a
+  // outra — `net::ERR_ABORTED`. A fila faz cada host registrar a sua antes de o
+  // proximo procurar.
+  const proxima = filaDeAbas.then(() => abrirParaHost(host));
+  filaDeAbas = proxima.then(() => {}, () => {});
+  return proxima;
+}
+
+async function abrirParaHost(host) {
+  // Reconferido aqui dentro: quem esperou na fila pode ja ter ganho aba.
+  const atual = paginas.get(host);
+  if (atual && !atual.isClosed()) return atual;
+
+  const abrirAba = async () => {
     const ctx = await getContext();
-    return ctx.pages().find((p) => !p.isClosed()) ?? (await ctx.newPage());
+    const emUso = new Set(paginas.values());
+    // A aba que o contexto persistente ja abre (about:blank) serve ao primeiro
+    // host que pedir; os outros ganham aba nova.
+    const livre = ctx.pages().find((p) => !p.isClosed() && !emUso.has(p));
+    return livre ?? (await ctx.newPage());
+  };
+
+  let page;
+  try {
+    page = await abrirAba();
   } catch (err) {
     if (!isClosedError(err)) throw err;
     log.warn('contexto do navegador estava morto — reabrindo');
     context = null;
-    const ctx = await getContext();
-    return ctx.pages().find((p) => !p.isClosed()) ?? (await ctx.newPage());
+    paginas.clear();
+    page = await abrirAba();
   }
+  paginas.set(host, page);
+  return page;
 }
 
 /**
@@ -125,7 +229,7 @@ function blockSignature(title, text) {
  *   nesse caso quem chamou tem de RENAVEGAR: a aba ainda esta na tela do
  *   desafio e a SPA nao vai disparar a busca sozinha.
  */
-async function ensureNotBlocked(page, url) {
+async function ensureNotBlocked(page, url, esperaMs = ESPERA_HUMANA_MS) {
   const title = await page.title().catch(() => '');
   const text = await page.evaluate(() => document.body?.innerText ?? '').catch(() => '');
   const guard = blockSignature(title, text);
@@ -138,13 +242,18 @@ async function ensureNotBlocked(page, url) {
     );
   }
 
-  log.warn(`bloqueio ${guard} na tela — RESOLVA NA JANELA DO NAVEGADOR (aguardo ate 5 min)`);
+  // Com os portais em paralelo o desafio pode estar numa aba escondida atras da
+  // de outro portal: traz para a frente antes de pedir uma pessoa.
+  await page.bringToFront().catch(() => {});
+  const prazo = esperaMs >= 60000 ? `${Math.round(esperaMs / 60000)} min` : `${Math.round(esperaMs / 1000)} s`;
+  log.warn(`bloqueio ${guard} na tela — RESOLVA NA JANELA DO NAVEGADOR (aguardo ate ${prazo})`);
   // Avisa o painel. Quem clicou no botao esta olhando para o painel, nao para a
   // janela do Chromium — sem isso a espera e invisivel e simplesmente expira,
   // que foi o que aconteceu em 2026-09-08 as 01:20.
   setNeedsHuman(true, `Resolva o ${guard} na janela do navegador`);
+  const host = new URL(url).host;
   try {
-    const deadline = Date.now() + 5 * 60 * 1000;
+    const deadline = Date.now() + esperaMs;
     while (Date.now() < deadline) {
       await page.waitForTimeout(3000);
       const t = await page.title().catch(() => '');
@@ -154,10 +263,24 @@ async function ensureNotBlocked(page, url) {
         return true;
       }
     }
+  } catch (err) {
+    // A janela fechou com o desafio na tela (fechada a mao, ou o proprio
+    // desafio derrubou a aba). Reabrir e pedir a pagina de novo e exatamente o
+    // que o bloqueio pune: o host fica de fora ate o fim da rodada.
+    if (!isClosedError(err)) throw err;
+    hostsBloqueados.set(host, guard);
+    throw new HttpError(
+      `a janela do navegador fechou durante o desafio ${guard} — nao insisto em ${host} ate a proxima coleta`,
+      { status: 403, url, guard },
+    );
   } finally {
     setNeedsHuman(false);
   }
-  throw new HttpError(`bloqueio ${guard} nao foi resolvido a tempo`, { status: 403, url, guard });
+  hostsBloqueados.set(host, guard);
+  throw new HttpError(
+    `bloqueio ${guard} nao foi resolvido a tempo — nao insisto em ${host} ate a proxima coleta`,
+    { status: 403, url, guard },
+  );
 }
 
 /**
@@ -170,13 +293,14 @@ async function ensureNotBlocked(page, url) {
  */
 export async function getSearchPayload(searchPath, pageNum = 1, opts = {}) {
   const host = 'www.webmotors.com.br';
+  recusarSeBloqueado(`https://${host}${searchPath}`);
 
   // O rate limit vale igual aqui: navegador nao e licenca para acelerar.
   if (!opts.skipRateLimit) {
     await acquire(host, { minIntervalMs: opts.minIntervalMs, jitterMs: opts.jitterMs });
   }
 
-  const page = await acquirePage();
+  const page = await acquirePage(host);
   const pageUrl = `https://${host}${searchPath}${pageNum > 1 ? `?page=${pageNum}` : ''}`;
   const timeout = opts.timeoutMs ?? 60000;
 
@@ -191,9 +315,13 @@ export async function getSearchPayload(searchPath, pageNum = 1, opts = {}) {
     // e o ouvinte expirava. Foi assim que a coleta de 2026-09-08 01:37 morreu,
     // com o usuario tendo resolvido o desafio em 15 segundos.
     let data = null;
+    // Canonicals das buscas que o site devolveu e nao eram a nossa. Se nenhuma
+    // tentativa der certo, sao a melhor pista: slug de marca/modelo errado faz o
+    // site responder com OUTRA busca (a da marca, ou o estoque inteiro).
+    const alheias = [];
 
     for (let tentativa = 1; tentativa <= 3 && !data; tentativa += 1) {
-      const ouvinte = esperarBuscaCerta(page, searchPath, timeout);
+      const ouvinte = esperarBuscaCerta(page, searchPath, timeout, alheias);
 
       // `commit` em vez de `domcontentloaded`: a navegacao so precisa DISPARAR
       // a busca — quem entrega o resultado e o ouvinte acima. Esperar a pagina
@@ -208,7 +336,7 @@ export async function getSearchPayload(searchPath, pageNum = 1, opts = {}) {
 
       // Se houve bloqueio e o usuario resolveu, a aba ficou na tela do desafio:
       // descarta este ouvinte e recomeca a tentativa com navegacao limpa.
-      if (await ensureNotBlocked(page, pageUrl)) continue;
+      if (await ensureNotBlocked(page, pageUrl, opts.esperaHumanaMs)) continue;
 
       data = await ouvinte;
       if (!data && tentativa < 3) {
@@ -232,15 +360,23 @@ export async function getSearchPayload(searchPath, pageNum = 1, opts = {}) {
       .catch(() => null);
 
     const found = embedded && findSearchResults(embedded);
-    if (found) {
+    // Mesma barreira do ouvinte. Antes o plano B aceitava qualquer payload — e o
+    // __NEXT_DATA__ de uma pagina que caiu na busca generica traz o site inteiro.
+    if (found && payloadMatchesPath(found, searchPath)) {
       log.info('payload lido do __NEXT_DATA__ da pagina');
       return found;
     }
 
-    throw new HttpError(
-      `nao consegui obter os resultados de ${pageUrl} — nem pela chamada da SPA nem pelo __NEXT_DATA__`,
-      { status: response?.status() ?? 0, url: pageUrl, guard: 'PerimeterX' },
-    );
+    // Aqui havia `status: response?.status()`, com `response` inexistente: o
+    // throw virava ReferenceError e a mensagem real se perdia. [2026-09-15]
+    const pista = alheias.length
+      ? ` — o site respondeu com outra busca (${alheias.at(-1)}); confira o slug de marca/modelo desta busca no Webmotors`
+      : ' — nem pela chamada da SPA nem pelo __NEXT_DATA__';
+    throw new HttpError(`nao consegui obter os resultados de ${pageUrl}${pista}`, {
+      status: 0,
+      url: pageUrl,
+      guard: alheias.length ? null : 'PerimeterX',
+    });
   } catch (err) {
     if (err instanceof HttpError) throw err;
 
@@ -248,9 +384,13 @@ export async function getSearchPayload(searchPath, pageNum = 1, opts = {}) {
     // Reabrimos UMA vez e repetimos esta pagina. Em 2026-09-08 uma coleta de 7
     // minutos foi perdida inteira por causa disso.
     if (isClosedError(err) && !opts._retried) {
-      log.warn('o navegador fechou sozinho — reabrindo e repetindo esta pagina');
-      await closeBrowser();
-      return getSearchPayload(searchPath, pageNum, { ...opts, _retried: true, skipRateLimit: true });
+      log.warn('a aba (ou o navegador) fechou — reabrindo e repetindo esta pagina, no ritmo normal');
+      // So a aba deste host: fechar o navegador inteiro derrubaria os outros
+      // portais, que agora rodam ao mesmo tempo.
+      paginas.delete(host);
+      // Com rate limit: repetir no mesmo segundo foi o que renovou o CAPTCHA
+      // em 2026-09-15. O intervalo normal do host vale para a nova tentativa.
+      return getSearchPayload(searchPath, pageNum, { ...opts, _retried: true, skipRateLimit: false });
     }
 
     throw new HttpError(`falha no navegador em ${pageUrl}: ${err.message}`, { url: pageUrl });
@@ -271,13 +411,14 @@ export async function getSearchPayload(searchPath, pageNum = 1, opts = {}) {
  */
 export async function getPageHtml(url, opts = {}) {
   const host = new URL(url).host;
+  recusarSeBloqueado(url);
 
   // Navegador nao e licenca para acelerar — vale o mesmo intervalo do fetch.
   if (!opts.skipRateLimit) {
     await acquire(host, { minIntervalMs: opts.minIntervalMs, jitterMs: opts.jitterMs });
   }
 
-  const page = await acquirePage();
+  const page = await acquirePage(host);
   const timeout = opts.timeoutMs ?? 60000;
 
   try {
@@ -295,7 +436,7 @@ export async function getPageHtml(url, opts = {}) {
         log.warn(`navegacao demorou (${navErr.message.split('\n')[0]}) — sigo com o que estiver na tela`);
       }
 
-      if (await ensureNotBlocked(page, url)) continue;
+      if (await ensureNotBlocked(page, url, opts.esperaHumanaMs)) continue;
 
       // Conteudo que so aparece depois do JS: espera o seletor, mas nao morre
       // por causa dele — quem julga se a pagina serve e quem chamou.
@@ -314,9 +455,10 @@ export async function getPageHtml(url, opts = {}) {
     if (err instanceof HttpError) throw err;
 
     if (isClosedError(err) && !opts._retried) {
-      log.warn('o navegador fechou sozinho — reabrindo e repetindo esta pagina');
-      await closeBrowser();
-      return getPageHtml(url, { ...opts, _retried: true, skipRateLimit: true });
+      log.warn('a aba (ou o navegador) fechou — reabrindo e repetindo esta pagina, no ritmo normal');
+      paginas.delete(host);
+      // Com rate limit, pelo mesmo motivo do getSearchPayload.
+      return getPageHtml(url, { ...opts, _retried: true, skipRateLimit: false });
     }
 
     throw new HttpError(`falha no navegador em ${url}: ${err.message}`, { url });
@@ -351,7 +493,7 @@ export async function getPageHtml(url, opts = {}) {
  * Payload de outra busca (destaques, recomendados, estoque do site inteiro) nao
  * resolve a promessa: seguimos ouvindo ate a certa chegar ou o prazo acabar.
  */
-function esperarBuscaCerta(page, searchPath, timeout) {
+function esperarBuscaCerta(page, searchPath, timeout, alheias = []) {
   return new Promise((resolve) => {
     let pronto = false;
 
@@ -373,6 +515,7 @@ function esperarBuscaCerta(page, searchPath, timeout) {
 
       if (!payloadMatchesPath(data, searchPath)) {
         log.warn(`ignorando busca alheia (canonical: ${data?.SEO?.Canonical ?? '?'})`);
+        alheias.push(data?.SEO?.Canonical ?? '?');
         return; // continua ouvindo
       }
       finalizar(data);
@@ -391,7 +534,14 @@ function esperarBuscaCerta(page, searchPath, timeout) {
 function payloadMatchesPath(data, searchPath) {
   const canonical = data?.SEO?.Canonical;
   if (!canonical) return true; // sem canonical nao da para julgar; nao reprova
-  return String(canonical).includes(searchPath);
+  // O caminho pedido tem de terminar num limite de segmento. Com `includes`
+  // puro, a busca ".../volkswagen/gol" aceitaria o canonical ".../volkswagen/golf".
+  const c = String(canonical).toLowerCase();
+  const alvo = String(searchPath).toLowerCase().replace(/\/+$/, '');
+  const i = c.indexOf(alvo);
+  if (i < 0) return false;
+  const depois = c[i + alvo.length];
+  return depois === undefined || depois === '/' || depois === '?' || depois === '#';
 }
 
 /** Procura, em qualquer profundidade do __NEXT_DATA__, um objeto com SearchResults. */

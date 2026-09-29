@@ -9,7 +9,7 @@
   },
   "scripts": {
     "db:migrate": "node db/migrate.js",
-    "db:seed": "node db/seed.js",
+    "db:catalogo": "node db/seed-catalogo.js",
     "start": "node src/server.js",
     "dev": "node --watch src/server.js",
     "collect": "node src/cli.js collect",
@@ -27,7 +27,6 @@
     "dotenv": "^16.4.5",
     "express": "^5.2.1",
     "mysql2": "^3.11.0",
-    "node-cron": "^4.6.0",
     "playwright": "^1.63.0",
     "yaml": "^2.5.0"
   }

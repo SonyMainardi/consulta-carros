@@ -4,9 +4,19 @@ Monitor local de anúncios de carros no **Webmotors, OLX e Mercado Livre**, com
 painel web. Roda inteiro na sua máquina — Node + MySQL, sem serviço externo e sem
 conta em lugar nenhum.
 
-Ele coleta uma vez por dia, guarda o histórico de cada anúncio e te mostra **o
-que mudou**: apareceu, baixou de preço, saiu do ar. Cada carro vem comparado com
-a tabela **FIPE**, que é por onde você vai ordenar de verdade.
+Você escolhe **marca e modelo** em dois selects, diz km, ano, preço e em quais
+portais procurar, e clica **Buscar**. Cada carro vem comparado com a tabela
+**FIPE**, que é por onde você vai ordenar de verdade.
+
+Não existe "busca salva": o que você escolheu vive **na URL**, e o link
+reproduz a mesma busca em qualquer máquina. O que o banco guarda são os
+**anúncios**, indexados por (marca, modelo) — um cache compartilhado, que
+responde na hora quando alguém já pediu aquele carro há pouco.
+
+Marcando **☆ Acompanhar**, o carro passa a ser recoletado e aí sim aparece
+**o que mudou**: apareceu, baixou de preço, saiu do ar.
+
+**Nada roda sozinho**: não há agendador. Toda coleta sai de um clique.
 
 ---
 
@@ -45,7 +55,7 @@ Todo o resto já vem com valor bom.
 
 ```bash
 npm run db:migrate     # cria o database e as tabelas
-npm run db:seed        # carrega o watches.yaml para o banco
+npm run db:catalogo    # semeia o catalogo da FIPE: ~107 marcas e ~1.200 modelos
 ```
 
 ## 4. Subir o painel
@@ -57,31 +67,37 @@ npm start
 Abra **http://localhost:3000**. O painel já sobe funcionando — vazio, porque
 ainda não houve coleta.
 
-> O agendador (`COLLECT_CRON`, padrão 9h da manhã) **só dispara com o
-> `npm start` rodando**. Se a máquina estiver desligada às 9h, a coleta do dia
-> não acontece.
+## 5. A primeira busca
 
-## 5. A primeira coleta
-
-No painel, clique em **Coletar tudo** — ou, para testar uma fonte só, no botão
-daquele portal (Webmotors, OLX, Mercado Livre).
+No painel, escolha **marca** e **modelo** nos dois selects, preencha o que quiser
+de **km máximo, ano e preço máximo**, marque os **portais** e clique **Buscar**.
 
 O que vai acontecer:
 
-- **Uma janela do Chromium abre.** Não feche: é ela que faz a coleta.
-- O botão vira barra de progresso.
-- **Webmotors leva ~5 minutos** — 5 páginas, com 60-80s de intervalo entre elas,
-  de propósito. **OLX e Mercado Livre levam ~4 segundos** cada, porque trazem
-  uma página só.
+- Se alguém já pediu esse carro nas últimas 6 horas, a resposta vem **na hora**,
+  do cache. A frase acima da tabela diz de quando é.
+- Se não, a busca **responde mesmo assim** com o que houver e a coleta vai por
+  fora: **uma janela do Chromium abre** (não feche: é ela que coleta) e o botão
+  do portal vira barra de progresso.
+- **OLX e Mercado Livre levam segundos** (uma página cada). O **Webmotors leva
+  ~3 minutos**: são 5 páginas, com 30-40s de intervalo entre elas, de propósito.
+  Os três portais rodam **ao mesmo tempo**.
 - Se aparecer um **CAPTCHA**, o botão fica laranja escrito *"Resolva o CAPTCHA na
   janela"*. Resolva na janela do Chromium e a coleta continua sozinha. Você tem
   5 minutos.
 
+O botão **Atualizar** força a coleta do carro que está na tela, mesmo com o cache
+fresco. Os botões de portal ao lado fazem o mesmo, só naquele portal.
+
+**A busca fica na URL:** `?modelo=901&km=100000&anoMin=2012&versao=GT`. Dá para
+guardar nos favoritos e mandar para alguém.
+
 Pelo terminal, se preferir:
 
 ```bash
-npm run collect                # todas as fontes
-npm run collect olx            # só uma
+npm run collect mitsubishi/lancer       # um carro, todos os portais
+npm run collect mitsubishi/lancer olx   # só um portal
+npm run collect --acompanhados          # todos os carros marcados com ☆
 ```
 
 ## 6. Confira se deu certo — a tela engana
@@ -102,24 +118,48 @@ SELECT source, status, items_found, duration_ms, error, started_at
 
 # O que o painel mostra
 
-- **Cartões** no topo: ativos, novos em 24h, baixas de preço e saídas dos últimos 7 dias
+- **A barra de busca**: marca, modelo e os limites. Tudo o que vem abaixo é do
+  que foi pedido ali, e uma frase diz **de quando** é o que está na tela
+- **Cartões**: ativos, novos em 24h, baixas de preço e saídas dos últimos 7 dias
 - **O que mudou**: o log de eventos — novo, baixou, subiu, saiu do ar, reanunciado, km mudou
 - **Anúncios ativos**: a tabela, com
   - filtros de **faixa de km** e **câmbio** (chips)
   - filtro por **estado** e por **portal** — clique nas palavras `LOCAL` e `FONTE` no cabeçalho
   - **ordenação por clique** em `ANO`, `KM`, `PREÇO` e `FIPE`: um clique crescente, outro inverte
   - **% da FIPE** por anúncio: verde abaixo da tabela, vermelho acima
+  - um **coração** no começo de cada linha, que guarda o anúncio nos favoritos
+- **Favoritos**: o botão no canto de cima abre a lista dos anúncios guardados —
+  de qualquer carro, não só o da busca
 
-### Teto de exibição
+### Favoritos
 
-Por padrão o painel **não mostra** carro acima de R$ 100.000 nem acima de 100.000
-km. É recorte de tela, não de coleta: o anúncio continua sendo guardado com todo
-o histórico. Para mudar, no `.env`:
+Clique no coração de um anúncio para guardá-lo; clique de novo para tirar. O
+painel **Favoritos** mostra, de cada um:
 
-```bash
-PANEL_PRICE_MAX=100000    # 0 desliga
-PANEL_KM_MAX=100000
-```
+- se ele **segue no ar**, **baixou** ou **subiu** de preço desde que você o
+  guardou (`R$ 52.000 → R$ 48.000`), **saiu do ar** ou **não foi visto** na
+  última coleta;
+- **de quando** é essa informação ("visto há 2h"). O painel não coleta nada:
+  para atualizar um favorito, busque o carro dele — o nome do carro na linha é
+  um link para essa busca.
+
+Os favoritos ficam no banco (tabela `favoritos`), não no navegador: sobrevivem a
+limpar o histórico e aparecem em qualquer navegador que abrir o painel. Não
+confunda com o **☆ Acompanhar**, que marca um *carro* inteiro para ter
+histórico de eventos; o coração marca um *anúncio*.
+
+### "Saiu do ar" só quando é verdade
+
+OLX e Mercado Livre deixam ler **uma página** da busca (paginar é proibido no
+robots.txt dos dois), e o Webmotors para em 5 páginas. Quando a coleta
+**não** viu a busca inteira, um anúncio que não apareceu pode só ter caído para a
+página 2 — então ele sai da tela **sem** virar "saiu do ar". O evento só aparece
+quando a coleta leu a busca inteira. A janela de buscas mostra, por portal, se a
+última coleta foi "busca inteira" ou "1ª página de N anúncios".
+
+E se o endereço de um portal estiver errado (a página que voltou não é daquele
+carro), a coleta daquele portal **falha** em vez de gravar carro errado — o
+endereço se corrige em Editar > "Endereço em cada portal".
 
 ---
 
@@ -155,40 +195,49 @@ Duas consequências que valem entender antes de mexer no código:
 
 ---
 
-# Configurando o que monitorar
+# Como o catálogo funciona
 
-Edite `watches.yaml` e rode `npm run db:seed`:
+Marca e modelo não se digitam: saem de um **catálogo fixo** no banco, semeado da
+tabela FIPE por `npm run db:catalogo` — ~107 marcas e ~1.200 modelos.
 
-```yaml
-watches:
-  - slug: mitsubishi-lancer
-    name: "Mitsubishi Lancer ate 100 mil km"
-    enabled: true
-    brand: Mitsubishi
-    model: Lancer
-    km_max: 100000
-    sources: [webmotors, olx, mercadolivre]
-```
+Cada par (modelo, portal) tem um **endereço** próprio, porque os portais não
+escrevem igual: na OLX, Volkswagen é `vw-volkswagen` e Chevrolet é
+`gm-chevrolet`. Esses endereços **se corrigem sozinhos**: a coleta confere se a
+página é mesmo do carro pedido e marca o endereço como `CONFIRMADO` ou
+`QUEBRADO`. Consertar um endereço quebrado é editar **uma linha**, e o conserto
+vale para todo mundo que pedir aquele carro.
 
-Campos aceitos: `brand`, `model`, `version_contains`, `year_min`, `year_max`,
-`price_min`, `price_max`, `km_max`, `uf` (`"SP"` ou `"SP,MG"`), `sources`.
+Km, preço, ano e versão **não vão na URL dos portais** (o robots.txt proíbe)
+**nem na coleta**: a busca vem inteira, o cache guarda tudo, e o recorte acontece
+na leitura. Marca e modelo são conferidos por **palavra inteira** ("Gol" não pega
+"Golf"), e a versão também ("GT" não pega "GTI").
 
-Todos são aplicados **depois** da coleta (`core/normalize.matchesWatch`), nunca
-na URL — veja o motivo acima.
+**Versão fica no campo de versão, nunca no modelo.** Os portais não têm endereço
+para versão: por isso o catálogo só tem modelos, e "Vectra GT" se pede como
+modelo **Vectra** + versão **GT**.
+
+## Acompanhar um carro
+
+Uma busca ao vivo acontece uma vez, e nada muda entre uma vez só — então
+"novo", "baixou de preço" e "saiu do ar" não existiriam. Clicando em
+**☆ Acompanhar**, o carro passa a ser recoletado e o histórico começa a valer.
+O histórico de preço é gravado sempre, acompanhado ou não.
 
 ---
 
 # Comandos
 
 ```bash
-npm start                     # painel + agendador
+npm start                     # painel (sem agendador: coleta só por clique)
 npm run dev                   # idem, com reload
 
-npm run collect               # uma coleta agora, todas as fontes
-npm run collect webmotors     # só uma fonte
+npm run collect mitsubishi/lancer        # um carro, todos os portais
+npm run collect mitsubishi/lancer olx    # só um portal
+npm run collect --acompanhados           # os carros marcados com ☆
 
 npm run db:migrate            # cria database e tabelas
-npm run db:seed               # watches.yaml -> banco
+npm run db:catalogo           # semeia marcas e modelos da FIPE
+npm run db:catalogo -- --marca=Honda     # só uma marca (útil para teste)
 
 node src/cli.js fipe 100      # preenche a FIPE dos pendentes
 node src/cli.js notify        # envia notificações pendentes
@@ -217,12 +266,13 @@ você comparar com o mapeamento do adapter.
 ```
 src/
 ├── adapters/     um por fonte. DESCARTÁVEL: só busca e mapeia.
-├── core/         normalize (parsing), pipeline (orquestra), panelLimits, progress
+├── core/         normalize (parsing + recorte), pipeline (orquestra), marcas
+│                 (apelidos e slug por portal), orcamento (páginas por busca), progress
 ├── http/         client (rate limit, backoff, cookies) + browser (Playwright)
-├── db/           pool + repositories
-├── enrich/       FIPE
+├── db/           pool + repositories + limites (km/preço/ano da busca em SQL)
+├── enrich/       FIPE (enriquecimento e catálogo de marcas/modelos)
 ├── notify/       Telegram
-├── server.js     API + estáticos + cron
+├── server.js     API + estáticos
 └── cli.js
 db/               schema.sql + migrate + seed
 public/           painel (HTML/CSS/JS, sem framework)
@@ -242,10 +292,12 @@ contrato, você reescreve um arquivo de ~150 linhas e nada mais é afetado.
 Os padrões do `.env` são deliberadamente lentos, e isso é decisão de projeto, não
 descuido:
 
-- **60 a 80 segundos** entre requisições ao mesmo host (intervalo + jitter)
+- **60 a 80 segundos** entre requisições ao mesmo host (30-40 no Webmotors, que
+  é o único que pagina — intervalo + jitter)
 - backoff exponencial, respeito a `Retry-After`, circuit breaker por fonte
 - sessão do navegador persistida entre coletas (reduz muito a chance de desafio)
-- **uma coleta por dia** — o mercado de carro usado não muda em cinco minutos
+- **no máximo 5 páginas do Webmotors por busca**, e coleta só quando você clica
+  — o mercado de carro usado não muda em cinco minutos
 
 Nunca use `fetch` direto contra as fontes, nem em script descartável: sempre
 `src/http/client.js` ou `src/http/browser.js`, que passam pelo mesmo limitador.

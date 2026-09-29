@@ -43,8 +43,10 @@ const MAX_PAGES = 20;
  * e ano fica por conta de matchesWatch(), depois da coleta. Sai mais caro em
  * paginas — e a forma que respeita a regra escrita da fonte.
  */
-function buildSearchPath(watch) {
-  return ['/carros-usados/estoque', slug(watch.brand), slug(watch.model)]
+function buildSearchPath(watch, extra = {}) {
+  // Os slugs vem da busca (watches.params, gravados quando ela e criada — ver
+  // src/core/marcas.js). O slugify do nome e so o plano B de busca antiga.
+  return ['/carros-usados/estoque', extra.marca ?? slug(watch.brand), extra.modelo ?? slug(watch.model)]
     .filter(Boolean)
     .join('/');
 }
@@ -139,14 +141,22 @@ export function mapItem(item) {
 export const webmotors = {
   name: 'webmotors',
   verified: true,
+  // Formato do endereco, para o painel mostrar a URL de cada busca. E o mesmo
+  // caminho de buildSearchPath(); mudar um exige mudar o outro.
+  endereco: 'https://www.webmotors.com.br/carros-usados/estoque/{marca}/{modelo}',
 
-  async search(watch) {
+  async search(watch, { maxPaginas = MAX_PAGES } = {}) {
     const extra = sourceParams(watch, 'webmotors');
-    const searchPath = extra.url ?? buildSearchPath(watch);
+    const searchPath = extra.url ?? buildSearchPath(watch, extra);
     const results = [];
     let porPagina = null; // fixado na 1a pagina; ver comentario no laco abaixo
+    let total = 0;
+    let paginasLidas = 0;
+    // Por que o laco parou. So 'fim' (a busca acabou) permite afirmar que um
+    // anuncio ausente saiu do ar; 'teto' e 'falha' deixam a cobertura parcial.
+    let parada = 'teto';
 
-    for (let page = 1; page <= MAX_PAGES; page += 1) {
+    for (let page = 1; page <= maxPaginas; page += 1) {
       // Dois transportes, mesmo formato de payload no fim.
       //
       // browser: navega ate a pagina de busca e le a chamada que a PROPRIA SPA
@@ -172,6 +182,7 @@ export const webmotors = {
           log.warn(
             `pagina ${page} falhou (${err.message}) — seguindo com as ${results.length} ja coletadas`,
           );
+          parada = 'falha';
           break;
         }
       } else {
@@ -203,12 +214,16 @@ export const webmotors = {
       }
 
       const items = data.SearchResults ?? [];
-      if (!Array.isArray(items) || items.length === 0) break;
+      if (!Array.isArray(items) || items.length === 0) {
+        parada = 'fim';
+        break;
+      }
 
       results.push(...items.map(mapItem));
+      paginasLidas = page;
 
       // `Count` e o total de anuncios da busca: para de paginar quando ja pegou tudo.
-      const total = Number(data.Count) || 0;
+      total = Number(data.Count) || 0;
 
       // Progresso por pagina. NAO e enfeite: com 60-80s de intervalo entre
       // paginas, uma coleta leva ~10 min. Sem esta linha o processo fica mudo
@@ -222,21 +237,39 @@ export const webmotors = {
       // e recalcular com ela dava "pagina 5/12" — a barra de progresso pularia
       // de 80% para 42% bem no fim. Visto em 2026-09-08 02:06.
       if (porPagina == null) porPagina = items.length || PAGE_SIZE;
-      const totalPaginas = total ? Math.ceil(total / porPagina) : '?';
+      const totalPaginas = total ? Math.ceil(total / porPagina) : null;
+      // Busca maior que o teto (Corolla: ~142 paginas): a barra anda ate o teto,
+      // nao ate um total que esta coleta nunca vai alcancar.
+      const paginasDaBarra = totalPaginas ? Math.min(totalPaginas, maxPaginas) : null;
+      const aviso = totalPaginas && totalPaginas > maxPaginas
+        ? ` — busca grande: leio so ${maxPaginas} de ${totalPaginas} paginas`
+        : '';
       const resumo =
-        `pagina ${page}/${totalPaginas}: +${items.length} anuncios ` +
-        `(acumulado ${results.length}${total ? ` de ${total}` : ''})`;
+        `pagina ${page}/${paginasDaBarra ?? '?'}: +${items.length} anuncios ` +
+        `(acumulado ${results.length}${total ? ` de ${total}` : ''})${aviso}`;
       log.info(resumo);
       setStep(`webmotors ${resumo}`, {
         page,
-        totalPages: total ? Math.ceil(total / porPagina) : null,
+        totalPages: paginasDaBarra,
         collected: results.length,
         total: total || null,
       });
-      if (items.length < PAGE_SIZE || (total && results.length >= total)) break;
+      if (items.length < PAGE_SIZE || (total && results.length >= total)) {
+        parada = 'fim';
+        break;
+      }
     }
 
-    log.info(`${results.length} anuncios para ${searchPath}`);
-    return results;
+    // Completa exige as duas coisas: o laco chegou ao fim da busca E os ids
+    // distintos cobrem o total. Anuncio que muda de pagina durante os ~5 min de
+    // coleta pode aparecer duas vezes e empurrar outro para fora — esse outro
+    // nao pode virar "saiu do ar".
+    const distintos = new Set(results.map((r) => r.externalId)).size;
+    const completa = parada === 'fim' && (!total || distintos >= total);
+    log.info(
+      `${results.length} anuncios para ${searchPath} ` +
+      `(${completa ? 'busca inteira' : `cobertura parcial: ${parada}, ${distintos} de ${total || '?'}`})`,
+    );
+    return { itens: results, total: total || null, paginas: paginasLidas, completa };
   },
 };

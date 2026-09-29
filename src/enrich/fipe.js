@@ -47,6 +47,10 @@ async function modelsOf(brandCode) {
   return cache.models[brandCode];
 }
 
+// O catalogo da modal de buscas (marca -> modelo) sai daqui: a mesma lista, o
+// mesmo cache em disco. Uma chamada a FIPE por marca, so na primeira vez.
+export { brands as marcasFipe, modelsOf as modelosFipe };
+
 /** Melhor candidato por sobreposicao de palavras — a FIPE nomeia versoes de forma muito verbosa. */
 function bestMatch(items, target, key = 'nome') {
   const wanted = norm(target).split(' ').filter((w) => w.length > 1);
